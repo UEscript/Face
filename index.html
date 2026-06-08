@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>High-Performance Angular Mesh Tracker</title>
+    <title>Ultimate Dense Mesh Wireframe Tracker</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { 
             width: 100%; 
             height: 100%; 
             overflow: hidden; 
-            background: #050508; 
+            background: #040406; 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
         }
         #app { 
@@ -42,14 +42,15 @@
             left: 20px; 
             z-index: 10; 
             padding: 12px 16px; 
-            background: rgba(5, 5, 8, 0.85); 
-            border: 1px solid rgba(0, 255, 136, 0.3); 
+            background: rgba(4, 4, 6, 0.9); 
+            border: 1px solid rgba(0, 255, 150, 0.3); 
             border-radius: 8px; 
             font-size: 12px; 
-            color: #00ff88;
+            color: #00ff96;
             backdrop-filter: blur(10px); 
             box-shadow: 0 8px 32px rgba(0,0,0,0.5);
             font-family: monospace;
+            line-height: 1.5;
         }
     </style>
 </head>
@@ -57,20 +58,23 @@
 
 <div id="app">
     <div id="telemetry">
-        <div>ENGINE: REAL-TIME GEOMETRIC WIREFRAME</div>
+        <div>SYSTEM: DENSE GEOMETRIC GRAPH ENGINE</div>
         <div id="fps">FPS: --</div>
+        <div id="status">STATUS: INITIALIZING CAM FEED...</div>
     </div>
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
 </div>
 
 <script type="module">
+// We pull the complete vision library suite directly via CDN
 import { FilesetResolver, FaceLandmarker, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const fpsDisplay = document.getElementById("fps");
+const statusDisplay = document.getElementById("status");
 
 let faceLandmarker;
 let handLandmarker;
@@ -78,39 +82,27 @@ let lastVideoTime = -1;
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
 
-// Grouping indices together to create angular mesh boundaries on the face
-const MESH_LINES = {
-    outline: [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10],
-    leftEye: [33, 160, 158, 133, 153, 144, 33],
-    rightEye: [362, 385, 387, 263, 373, 380, 362],
-    leftBrow: [70, 63, 105, 66, 107, 55],
-    rightBrow: [300, 293, 334, 296, 336, 285],
-    noseRidge: [6, 197, 195, 5],
-    noseBase: [102, 64, 2, 294, 331],
-    outerLips: [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84, 181, 91, 146, 61],
-    innerLips: [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95, 78]
-};
+// MediaPipe's official internal face mesh triangulation indices.
+// This encodes the exact interconnecting triangular lines across all 468 points.
+let faceTriangles = [];
 
-// Connections to link face structure down to neck anchors
-const NECK_CONNECTIONS = [
-    { from: 152, to: 148 }, // Chin to lower left throat
-    { from: 152, to: 377 }, // Chin to lower right throat
-    { from: 234, to: 58 },   // Left cheek to jaw hinge
-    { from: 454, to: 288 }  // Right cheek to jaw hinge
-];
-
-// Structural bone mapping for hands
+// Full skeleton structural maps for hands (joints + outer fingertips + side perimeter connections)
 const HAND_CONNECTIONS = [
-    [0,1], [1,2], [2,3], [3,4],       // Thumb
-    [0,5], [5,6], [6,7], [7,8],       // Index
-    [9,10], [10,11], [11,12],         // Middle
-    [13,14], [14,15], [15,16],        // Ring
-    [0,17], [17,18], [18,19], [19,20], // Pinky
-    [5,9], [9,13], [13,17]             // Palm Frame
+    [0,1], [1,2], [2,3], [3,4],           // Thumb
+    [0,5], [5,6], [6,7], [7,8],           // Index
+    [9,10], [10,11], [11,12],             // Middle
+    [13,14], [14,15], [15,16],            // Ring
+    [0,17], [17,18], [18,19], [19,20],    // Pinky
+    [5,9], [9,13], [13,17],                // Knuckle Base Lines
+    [0,5], [0,17]                         // Wrist Base Borders
 ];
 
-async function initializeTracking() {
+// Hand perimeter contour edge indices to outline the hand shape perfectly
+const HAND_EDGES = [0, 1, 2, 3, 4, 3, 2, 1, 5, 6, 7, 8, 7, 6, 9, 10, 11, 12, 11, 10, 13, 14, 15, 16, 15, 14, 17, 18, 19, 20, 19, 18, 17, 0];
+
+async function initializeSystem() {
     try {
+        statusDisplay.textContent = "STATUS: DOWNLOADING TARGET MODELS...";
         const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
         
         faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
@@ -131,6 +123,10 @@ async function initializeTracking() {
             numHands: 2
         });
 
+        // Generate the 468-point face mesh triangulation array dynamically
+        faceTriangles = FaceLandmarker.getTrianglesByCpu();
+
+        statusDisplay.textContent = "STATUS: RECOVERING HARDWARE FEED...";
         const stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } }
         });
@@ -138,37 +134,16 @@ async function initializeTracking() {
         video.srcObject = stream;
         video.onloadedmetadata = () => {
             video.play();
-            requestAnimationFrame(processingLoop);
+            statusDisplay.textContent = "STATUS: LOCK ACQUIRED";
+            requestAnimationFrame(processingRenderLoop);
         };
     } catch (err) {
-        console.error("Initialization failed: ", err);
+        statusDisplay.textContent = "STATUS: CAM FAULT";
+        console.error(err);
     }
 }
 
-function drawWireframePath(points, indices, color, width = 2) {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = width;
-    ctx.beginPath();
-    
-    let first = true;
-    for (const idx of indices) {
-        const pt = points[idx];
-        if (!pt) continue;
-        
-        const x = pt.x * canvas.width;
-        const y = pt.y * canvas.height;
-        
-        if (first) {
-            ctx.moveTo(x, y);
-            first = false;
-        } else {
-            ctx.lineTo(x, y);
-        }
-    }
-    ctx.stroke();
-}
-
-function processingLoop() {
+function processingRenderLoop() {
     if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
@@ -180,69 +155,80 @@ function processingLoop() {
         lastVideoTime = video.currentTime;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Mirror canvas globally to sync with mirrored video feed layout
+        // Mirror canvas alignment instantly to fix tracking offsets
         ctx.save();
         ctx.translate(canvas.width, 0);
         ctx.scale(-1, 1);
 
-        // Live hardware inference execution
         const faceResult = faceLandmarker.detectForVideo(video, timestamp);
         const handResult = handLandmarker.detectForVideo(video, timestamp);
 
         const w = canvas.width;
         const h = canvas.height;
 
-        // Render Angular Face Mesh
+        // --- DENSE TRIANGULATION FACE MESH ---
         if (faceResult.faceLandmarks && faceResult.faceLandmarks.length > 0) {
             const face = faceResult.faceLandmarks[0];
 
-            // Render structural facet maps
-            drawWireframePath(face, MESH_LINES.outline, "#00ffcc", 2.5);
-            drawWireframePath(face, MESH_LINES.leftEye, "#ff3366", 1.5);
-            drawWireframePath(face, MESH_LINES.rightEye, "#ff3366", 1.5);
-            drawWireframePath(face, MESH_LINES.leftBrow, "#00ffcc", 2);
-            drawWireframePath(face, MESH_LINES.rightBrow, "#00ffcc", 2);
-            drawWireframePath(face, MESH_LINES.noseRidge, "#00ffcc", 2);
-            drawWireframePath(face, MESH_LINES.noseBase, "#00ffcc", 2);
-            drawWireframePath(face, MESH_LINES.outerLips, "#ff3366", 2);
-            drawWireframePath(face, MESH_LINES.innerLips, "#ff3366", 1.5);
-
-            // Dynamic Cross-Facet Lines (Creates the angular planes on the face)
-            ctx.strokeStyle = "rgba(0, 255, 204, 0.25)";
-            ctx.lineWidth = 1;
+            // Renders the dense multi-directional mesh matrix over the entire face surface
+            ctx.strokeStyle = "rgba(0, 255, 180, 0.22)"; // Cyberpunk green grid
+            ctx.lineWidth = 0.8;
             
-            // Connect eyebrows to nose bridge
             ctx.beginPath();
-            ctx.moveTo(face[55].x * w, face[55].y * h); ctx.lineTo(face[6].x * w, face[6].y * h);
-            ctx.lineTo(face[285].x * w, face[285].y * h);
-            
-            // Connect eyes to cheeks to nose
-            ctx.moveTo(face[133].x * w, face[133].y * h); ctx.lineTo(face[234].x * w, face[234].y * h); ctx.lineTo(face[2].x * w, face[2].y * h);
-            ctx.moveTo(face[362].x * w, face[362].y * h); ctx.lineTo(face[454].x * w, face[454].y * h); ctx.lineTo(face[2].x * w, face[2].y * h);
+            // Loop through all geometric triplets to build the continuous grid wireframe
+            for (let i = 0; i < faceTriangles.length; i += 3) {
+                const ptA = face[faceTriangles[i]];
+                const ptB = face[faceTriangles[i + 1]];
+                const ptC = face[faceTriangles[i + 2]];
+
+                if (ptA && ptB && ptC) {
+                    ctx.moveTo(ptA.x * w, ptA.y * h);
+                    ctx.lineTo(ptB.x * w, ptB.y * h);
+                    ctx.lineTo(ptC.x * w, ptC.y * h);
+                    ctx.lineTo(ptA.x * w, ptA.y * h);
+                }
+            }
             ctx.stroke();
 
-            // Render Neck Rigging Coupling
-            ctx.strokeStyle = "rgba(0, 162, 255, 0.6)";
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            NECK_CONNECTIONS.forEach(edge => {
-                const p1 = face[edge.from];
-                const p2 = face[edge.to];
-                if (p1 && p2) {
-                    ctx.moveTo(p1.x * w, p1.y * h);
-                    ctx.lineTo(p2.x * w, p2.y * h);
-                }
+            // Bold highlights for key active profiles (Eyes, Brows, Lips, Outer Rim)
+            ctx.strokeStyle = "rgba(255, 51, 102, 0.75)"; // Bright contrast pink
+            ctx.lineWidth = 1.8;
+            
+            // Loop contours: Lips & Eyes
+            const features = [
+                [33, 160, 158, 133, 153, 144, 33], // Left Eye Rim
+                [362, 385, 387, 263, 373, 380, 362], // Right Eye Rim
+                [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84, 181, 91, 146, 61] // Lips Outer Perimeter
+            ];
+
+            features.forEach(path => {
+                ctx.beginPath();
+                path.forEach((idx, step) => {
+                    const pt = face[idx];
+                    if (pt) {
+                        if (step === 0) ctx.moveTo(pt.x * w, pt.y * h);
+                        else ctx.lineTo(pt.x * w, pt.y * h);
+                    }
+                });
+                ctx.stroke();
             });
+
+            // Draw neck base tracking anchor directly off the lower chin coordinates
+            ctx.strokeStyle = "rgba(0, 162, 255, 0.6)";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(face[152].x * w, face[152].y * h); // Chin base
+            ctx.lineTo(face[152].x * w, (face[152].y + 0.12) * h); // Core neck vector dropping straight down safely
             ctx.stroke();
         }
 
-        // Render Hand Wireframes
+        // --- FULL BOUNDARY HAND & FINGER TRACKER ---
         if (handResult.landmarks && handResult.landmarks.length > 0) {
             handResult.landmarks.forEach(hand => {
-                ctx.strokeStyle = "#ffcc00";
-                ctx.lineWidth = 2.5;
+                // 1. Draw structural bone connections
+                ctx.strokeStyle = "#ffcc00"; // Deep tech yellow
+                ctx.lineWidth = 2.2;
                 ctx.beginPath();
-                
                 HAND_CONNECTIONS.forEach(([start, end]) => {
                     const p1 = hand[start];
                     const p2 = hand[end];
@@ -253,14 +239,17 @@ function processingLoop() {
                 });
                 ctx.stroke();
 
-                // Cross-connect knuckles to show hand surface angles
-                ctx.strokeStyle = "rgba(255, 204, 0, 0.3)";
+                // 2. Draw outer hand edge outline (fixes your missing fingers issue)
+                ctx.strokeStyle = "rgba(255, 204, 0, 0.5)";
                 ctx.lineWidth = 1.5;
                 ctx.beginPath();
-                ctx.moveTo(hand[5].x * w, hand[5].y * h);
-                for(let k = 9; k <= 17; k += 4) {
-                    ctx.lineTo(hand[k].x * w, hand[k].y * h);
-                }
+                HAND_EDGES.forEach((idx, step) => {
+                    const pt = hand[idx];
+                    if (pt) {
+                        if (step === 0) ctx.moveTo(pt.x * w, pt.y * h);
+                        else ctx.lineTo(pt.x * w, pt.y * h);
+                    }
+                });
                 ctx.stroke();
             });
         }
@@ -268,20 +257,20 @@ function processingLoop() {
         ctx.restore();
     }
 
-    // Performance FPS metrics calculation
+    // High performance calculation loop indicator
     frameCount++;
     const now = performance.now();
     if (now >= lastFpsUpdate + 1000) {
         const currentFps = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
-        fpsDisplay.textContent = `FPS: ${currentFps} [GPU ACCELERATED]`;
+        fpsDisplay.textContent = `FPS: ${currentFps} [GPU NATIVE]`;
         frameCount = 0;
         lastFpsUpdate = now;
     }
 
-    requestAnimationFrame(processingLoop);
+    requestAnimationFrame(processingRenderLoop);
 }
 
-initializeTracking();
+initializeSystem();
 </script>
 </body>
 </html>
