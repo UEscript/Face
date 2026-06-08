@@ -3,235 +3,386 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Face Feature Mapper</title>
+
+<title>Face + Hand Mapper</title>
 
 <style>
+*{
+margin:0;
+padding:0;
+box-sizing:border-box;
+}
+
+html,
 body{
-    margin:0;
-    background:#111;
-    color:white;
-    font-family:Arial,sans-serif;
-    overflow:hidden;
+width:100%;
+height:100%;
+overflow:hidden;
+background:#111;
+font-family:Arial,sans-serif;
+color:white;
 }
 
-#container{
-    position:relative;
-    width:100vw;
-    height:100vh;
+#app{
+position:relative;
+width:100vw;
+height:100vh;
+overflow:hidden;
 }
 
-video,canvas{
-    position:absolute;
-    width:100%;
-    height:100%;
-    object-fit:cover;
+video{
+position:absolute;
+top:0;
+left:0;
+width:100%;
+height:100%;
+object-fit:cover;
+z-index:1;
+}
+
+canvas{
+position:absolute;
+top:0;
+left:0;
+width:100%;
+height:100%;
+z-index:2;
+pointer-events:none;
 }
 
 #status{
-    position:absolute;
-    top:10px;
-    left:10px;
-    background:rgba(0,0,0,.6);
-    padding:8px;
-    border-radius:8px;
-    z-index:100;
+position:absolute;
+top:10px;
+left:10px;
+z-index:100;
+padding:10px;
+background:rgba(0,0,0,.6);
+border-radius:10px;
+font-size:14px;
+backdrop-filter:blur(10px);
+}
+
+#legend{
+position:absolute;
+bottom:10px;
+left:10px;
+z-index:100;
+padding:10px;
+background:rgba(0,0,0,.5);
+border-radius:10px;
+font-size:12px;
+max-width:250px;
+}
+
+.label{
+position:absolute;
+z-index:999;
 }
 </style>
 </head>
+
 <body>
 
-<div id="container">
-    <div id="status">Loading...</div>
-    <video id="video" autoplay playsinline muted></video>
-    <canvas id="canvas"></canvas>
+<div id="app">
+
+<div id="status">
+Loading Models...
+</div>
+
+<div id="legend">
+<strong>Face:</strong><br>
+Forehead, Eyes, Brows, Cheeks, Nose, Lips, Jaw, Chin, Neck
+<br><br>
+<strong>Hands:</strong><br>
+Thumb, Index, Middle, Ring, Pinky, Palm, Wrist
+</div>
+
+<video id="video" autoplay playsinline muted></video>
+<canvas id="canvas"></canvas>
+
 </div>
 
 <script type="module">
 
 import {
-    FaceLandmarker,
-    FilesetResolver
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+FilesetResolver,
+FaceLandmarker,
+HandLandmarker
+}
+from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
-const statusBox = document.getElementById("status");
+const status = document.getElementById("status");
 
 let faceLandmarker;
-
-const LABELS = {
-    "Forehead": 10,
-    "Hairline": 10,
-    "Left Eye": 33,
-    "Right Eye": 263,
-    "Left Eyebrow": 70,
-    "Right Eyebrow": 300,
-    "Nose Bridge": 6,
-    "Nose Tip": 1,
-    "Upper Lip": 13,
-    "Lower Lip": 14,
-    "Left Cheek": 234,
-    "Right Cheek": 454,
-    "Jawline": 172,
-    "Chin": 152
-};
-
-async function setupCamera() {
-
-    const stream = await navigator.mediaDevices.getUserMedia({
-        video:{
-            facingMode:"user",
-            width:{ideal:1280},
-            height:{ideal:720}
-        }
-    });
-
-    video.srcObject = stream;
-
-    return new Promise(resolve=>{
-        video.onloadedmetadata=()=>{
-            resolve();
-        };
-    });
-}
-
-async function loadModel() {
-
-    const vision = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-    );
-
-    faceLandmarker = await FaceLandmarker.createFromOptions(
-        vision,
-        {
-            baseOptions:{
-                modelAssetPath:
-                "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
-            },
-            runningMode:"VIDEO",
-            numFaces:1,
-            outputFaceBlendshapes:false
-        }
-    );
-}
-
-function drawLabel(text,x,y){
-
-    ctx.font="12px Arial";
-
-    const width = ctx.measureText(text).width;
-
-    ctx.fillStyle="rgba(0,0,0,.7)";
-    ctx.fillRect(x-4,y-14,width+8,18);
-
-    ctx.fillStyle="white";
-    ctx.fillText(text,x,y);
-}
-
-function drawLandmarks(landmarks){
-
-    const w = canvas.width;
-    const h = canvas.height;
-
-    ctx.fillStyle="#00ff66";
-
-    for(const point of landmarks){
-
-        const x = point.x * w;
-        const y = point.y * h;
-
-        ctx.beginPath();
-        ctx.arc(x,y,1.5,0,Math.PI*2);
-        ctx.fill();
-    }
-
-    Object.entries(LABELS).forEach(([name,index])=>{
-
-        const p = landmarks[index];
-
-        if(!p) return;
-
-        const x = p.x * w;
-        const y = p.y * h;
-
-        ctx.fillStyle="red";
-        ctx.beginPath();
-        ctx.arc(x,y,4,0,Math.PI*2);
-        ctx.fill();
-
-        drawLabel(name,x+8,y-8);
-    });
-}
-
+let handLandmarker;
 let lastVideoTime = -1;
 
-function render(){
+const FACE_LABELS = {
+"Forehead": 10,
+"Left Eye": 33,
+"Right Eye": 263,
+"Left Brow": 70,
+"Right Brow": 300,
+"Nose": 1,
+"Left Cheek": 234,
+"Right Cheek": 454,
+"Upper Lip": 13,
+"Lower Lip": 14,
+"Jaw": 172,
+"Chin": 152
+};
 
+async function createModels() {
+const vision = await FilesetResolver.forVisionTasks(
+"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+);
+
+faceLandmarker = await FaceLandmarker.createFromOptions(
+vision,
+{
+baseOptions: {
+modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
+},
+runningMode: "VIDEO",
+numFaces: 1,
+outputFaceBlendshapes: false
+}
+);
+
+handLandmarker = await HandLandmarker.createFromOptions(
+vision,
+{
+baseOptions: {
+modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task"
+},
+runningMode: "VIDEO",
+numHands: 2
+}
+);
+}
+
+async function setupCamera() {
+const stream = await navigator.mediaDevices.getUserMedia({
+video: {
+facingMode: "user",
+width: { ideal: 1280 },
+height: { ideal: 720 }
+}
+});
+
+video.srcObject = stream;
+
+return new Promise(resolve => {
+video.onloadedmetadata = () => {
+resolve();
+};
+});
+}
+
+function drawDot(x, y, size, color) {
+ctx.fillStyle = color;
+ctx.beginPath();
+ctx.arc(x, y, size, 0, Math.PI * 2);
+ctx.fill();
+}
+
+function drawLabel(text, x, y, color = "#ffffff") {
+ctx.font = "12px Arial";
+const width = ctx.measureText(text).width;
+ctx.fillStyle = "rgba(0,0,0,.75)";
+ctx.fillRect(x - 4, y - 16, width + 10, 18);
+ctx.fillStyle = color;
+ctx.fillText(text, x, y - 2);
+}
+
+function drawFaceLandmarks(face) {
+const w = canvas.width;
+const h = canvas.height;
+
+for (const point of face) {
+drawDot(point.x * w, point.y * h, 1, "#00ff88");
+}
+
+for (const [name, index] of Object.entries(FACE_LABELS)) {
+const p = face[index];
+if (!p) continue;
+const x = p.x * w;
+const y = p.y * h;
+drawDot(x, y, 4, "red");
+drawLabel(name, x + 8, y);
+}
+}
+
+function drawFaceOutline(face) {
+const w = canvas.width;
+const h = canvas.height;
+const oval = [
+10, 338, 297, 332, 284, 251, 389, 356,
+454, 323, 361, 288, 397, 365, 379, 378,
+400, 377, 152, 148, 176, 149, 150, 136,
+172, 58, 132, 93, 234, 127, 162, 21,
+54, 103, 67, 109
+];
+
+ctx.strokeStyle = "cyan";
+ctx.lineWidth = 2;
+ctx.beginPath();
+
+oval.forEach((id, index) => {
+const p = face[id];
+if (!p) return;
+const x = p.x * w;
+const y = p.y * h;
+
+if (index === 0) {
+ctx.moveTo(x, y);
+} else {
+ctx.lineTo(x, y);
+}
+});
+
+ctx.closePath();
+ctx.stroke();
+}
+
+function drawNeck(face) {
+const w = canvas.width;
+const h = canvas.height;
+const chin = face[152];
+const jawLeft = face[234];
+const jawRight = face[454];
+
+if (!chin || !jawLeft || !jawRight) return;
+
+const chinX = chin.x * w;
+const chinY = chin.y * h;
+const jawWidth = Math.abs((jawRight.x * w) - (jawLeft.x * w));
+const neckWidth = jawWidth * 0.60;
+const neckHeight = jawWidth * 0.55;
+
+ctx.strokeStyle = "#66ccff";
+ctx.lineWidth = 2;
+ctx.strokeRect(chinX - neckWidth / 2, chinY + 12, neckWidth, neckHeight);
+drawLabel("Neck", chinX - neckWidth / 2, chinY + neckHeight + 30);
+}
+
+const HAND_CONNECTIONS = [
+[0, 1], [1, 2], [2, 3], [3, 4],
+[0, 5], [5, 6], [6, 7], [7, 8],
+[0, 9], [9, 10], [10, 11], [11, 12],
+[0, 13], [13, 14], [14, 15], [15, 16],
+[0, 17], [17, 18], [18, 19], [19, 20]
+];
+
+function drawHand(hand) {
+const w = canvas.width;
+const h = canvas.height;
+
+ctx.strokeStyle = "yellow";
+ctx.lineWidth = 3;
+
+HAND_CONNECTIONS.forEach(([a, b]) => {
+const p1 = hand[a];
+const p2 = hand[b];
+if (!p1 || !p2) return;
+
+ctx.beginPath();
+ctx.moveTo(p1.x * w, p1.y * h);
+ctx.lineTo(p2.x * w, p2.y * h);
+ctx.stroke();
+});
+
+hand.forEach(point => {
+drawDot(point.x * w, point.y * h, 4, "orange");
+});
+
+const HAND_LABELS = [
+["Wrist", 0],
+["Thumb", 4],
+["Index", 8],
+["Middle", 12],
+["Ring", 16],
+["Pinky", 20]
+];
+
+HAND_LABELS.forEach(([name, id]) => {
+const p = hand[id];
+if (p) drawLabel(name, p.x * w + 8, p.y * h);
+});
+
+const palm = hand[0];
+if (palm) drawLabel("Hand", palm.x * w + 25, palm.y * h + 20, "#ffff00");
+}
+
+function updateStatus(faceFound, handsFound) {
+let text = "";
+if (faceFound) text += "Face Detected ";
+if (handsFound > 0) text += (text ? "| " : "") + "Hands: " + handsFound;
+if (!faceFound && handsFound === 0) text = "Searching...";
+status.textContent = text;
+}
+
+// Predict loop executing frame by frame
+async function predictLoop() {
+  if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
+  }
 
-    ctx.clearRect(0,0,canvas.width,canvas.height);
+  let nowInMs = performance.now();
+  
+  if (video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
 
-    const now = performance.now();
+    // Run inference processes
+    const faceResult = faceLandmarker.detectForVideo(video, nowInMs);
+    const handResult = handLandmarker.detectForVideo(video, nowInMs);
 
-    if(video.currentTime !== lastVideoTime){
+    // Clear canvas canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        lastVideoTime = video.currentTime;
+    let faceFound = faceResult.faceLandmarks && faceResult.faceLandmarks.length > 0;
+    let handsFound = handResult.landmarks ? handResult.landmarks.length : 0;
 
-        const result = faceLandmarker.detectForVideo(
-            video,
-            now
-        );
-
-        if(result.faceLandmarks.length > 0){
-
-            drawLandmarks(
-                result.faceLandmarks[0]
-            );
-
-            statusBox.innerText =
-                "Face detected • 468 landmarks";
-        }
-        else{
-            statusBox.innerText =
-                "Looking for a face...";
-        }
+    // Render results
+    if (faceFound) {
+      const face = faceResult.faceLandmarks[0];
+      drawFaceOutline(face);
+      drawFaceLandmarks(face);
+      drawNeck(face);
     }
 
-    requestAnimationFrame(render);
-}
-
-async function start(){
-
-    try{
-
-        statusBox.innerText="Loading model...";
-
-        await loadModel();
-
-        statusBox.innerText="Opening camera...";
-
-        await setupCamera();
-
-        statusBox.innerText="Ready";
-
-        render();
-
-    }catch(err){
-
-        console.error(err);
-
-        statusBox.innerText =
-            "Camera/model error";
+    if (handsFound > 0) {
+      handResult.landmarks.forEach(hand => {
+        drawHand(hand);
+      });
     }
+
+    updateStatus(faceFound, handsFound);
+  }
+
+  requestAnimationFrame(predictLoop);
 }
 
-start();
+// Master init script block
+async function init() {
+  try {
+    await createModels();
+    await setupCamera();
+    status.textContent = "Camera Ready. Starting tracking...";
+    video.play();
+    requestAnimationFrame(predictLoop);
+  } catch (err) {
+    status.textContent = "Error: " + err.message;
+    console.error(err);
+  }
+}
+
+init();
 
 </script>
-
 </body>
 </html>
