@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Instant 3D Face Matrix Rig</title>
+    <title>3D Dual-Matrix Lock Rig</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -27,8 +28,8 @@
 
 <div id="app">
     <div id="telemetry">
-        <div>SYSTEM: PURE 3D FACE LOCK RIG</div>
-        <div id="fps">FPS: -- [MAX COMPUTE]</div>
+        <div>SYSTEM: DUAL 3D MATRIX HARMONY</div>
+        <div id="fps">FPS: -- [DYNAMIC LOCK]</div>
     </div>
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
@@ -42,44 +43,63 @@ const fpsDisplay = document.getElementById("fps");
 
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
+window.latestHandResults = null;
 
-// Instantly open the camera feed
+// Direct hand bone link infrastructure
+const HAND_LINKS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[9,10],[10,11],[11,12],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
+
 navigator.mediaDevices.getUserMedia({
     video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }
 }).then(stream => {
     video.srcObject = stream;
     video.play();
-    initializeFaceLock();
+    initializeDualLock();
 });
 
-function initializeFaceLock() {
+function initializeDualLock() {
     const faceMesh = new FaceMesh({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
 
+    // Enabled strict structural tracking options to properly calculate 3D side profiles
     faceMesh.setOptions({
         maxNumFaces: 1,
-        refineLandmarks: true, // Perfect precision tracking for eyes/lips
+        refineLandmarks: true, 
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.6
+    });
+
+    const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 1,
         minDetectionConfidence: 0.5,
         minTrackingConfidence: 0.5
     });
 
     faceMesh.onResults((results) => {
-        render3DMatrix(results);
+        renderDualMatrix(results);
     });
 
-    // Send camera frames directly into the specialized face pipeline
+    hands.onResults((results) => {
+        window.latestHandResults = results;
+    });
+
     const camera = new Camera(video, {
         onFrame: async () => {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             await faceMesh.send({ image: video });
+            await hands.send({ image: video });
         }
     });
     camera.start();
 }
 
-function render3DMatrix(results) {
+function renderDualMatrix(faceResults) {
     const w = canvas.width;
     const h = canvas.height;
     
@@ -88,12 +108,13 @@ function render3DMatrix(results) {
     ctx.translate(w, 0);
     ctx.scale(-1, 1);
 
-    if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-        const landmarks = results.multiFaceLandmarks[0];
+    // --- TONED DOWN 3D FACE MESH ---
+    if (faceResults.multiFaceLandmarks && faceResults.multiFaceLandmarks.length > 0) {
+        const landmarks = faceResults.multiFaceLandmarks[0];
 
-        // 1. Draw the absolute structural 3D mesh lines (Connect the dots seamlessly)
-        ctx.strokeStyle = "rgba(0, 255, 255, 0.4)";
-        ctx.lineWidth = 1.0;
+        // Toned down to a transparent, thin blue glow so you can see your face clearly
+        ctx.strokeStyle = "rgba(0, 255, 255, 0.15)";
+        ctx.lineWidth = 0.8;
         ctx.beginPath();
         for (const connection of FACEMESH_TESSELATION) {
             const from = landmarks[connection[0]];
@@ -105,13 +126,13 @@ function render3DMatrix(results) {
         }
         ctx.stroke();
 
-        // 2. High-Contrast Highlight Paths (Eyes, Eyebrows, Lips outer rings)
+        // High-Contrast Accent Rings for Key Features (Eyes, Brows, Lips)
         const featurePaths = [
-            { path: FACEMESH_RIGHT_EYE, color: "#ff0055", width: 2.2 },
-            { path: FACEMESH_LEFT_EYE, color: "#ff0055", width: 2.2 },
-            { path: FACEMESH_LIPS, color: "#ff0055", width: 2.2 },
-            { path: FACEMESH_RIGHT_EYEBROW, color: "#00ffff", width: 1.8 },
-            { path: FACEMESH_LEFT_EYEBROW, color: "#00ffff", width: 1.8 }
+            { path: FACEMESH_RIGHT_EYE, color: "#00ffff", width: 1.8 },
+            { path: FACEMESH_LEFT_EYE, color: "#00ffff", width: 1.8 },
+            { path: FACEMESH_LIPS, color: "#00ffff", width: 1.8 },
+            { path: FACEMESH_RIGHT_EYEBROW, color: "#00ffff", width: 1.5 },
+            { path: FACEMESH_LEFT_EYEBROW, color: "#00ffff", width: 1.5 }
         ];
 
         featurePaths.forEach(feature => {
@@ -129,24 +150,52 @@ function render3DMatrix(results) {
             ctx.stroke();
         });
 
-        // 3. Render tracking nodes directly on top of every intersection across the 3D space
+        // Small, sharp matrix junction dots
         ctx.fillStyle = "#33ffff";
         for (let i = 0; i < landmarks.length; i++) {
             const pt = landmarks[i];
-            
             ctx.beginPath();
-            ctx.arc(pt.x * w, pt.y * h, 1.8, 0, 2 * Math.PI);
+            ctx.arc(pt.x * w, pt.y * h, 1.5, 0, 2 * Math.PI);
             ctx.fill();
         }
     }
 
+    // --- MATCHING CYAN 3D HAND RIGS ---
+    const activeHands = window.latestHandResults;
+    if (activeHands && activeHands.multiHandLandmarks) {
+        activeHands.multiHandLandmarks.forEach(handLandmarks => {
+            
+            // Structural lines matching the clean face styling
+            ctx.strokeStyle = "rgba(0, 255, 255, 0.4)";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            for (const connection of HAND_LINKS) {
+                const from = handLandmarks[connection[0]];
+                const to = handLandmarks[connection[1]];
+                if (from && to) {
+                    ctx.moveTo(from.x * w, from.y * h);
+                    ctx.lineTo(to.x * w, to.y * h);
+                }
+            }
+            ctx.stroke();
+
+            // Sharp cyan joint nodes
+            ctx.fillStyle = "#33ffff";
+            for (const pt of handLandmarks) {
+                ctx.beginPath();
+                ctx.arc(pt.x * w, pt.y * h, 2.2, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+        });
+    }
+
     ctx.restore();
 
-    // FPS Counter Performance Check
+    // Performance Tracker
     frameCount++;
     const now = performance.now();
     if (now >= lastFpsUpdate + 1000) {
-        fpsDisplay.textContent = `FPS: ${Math.round((frameCount * 1000) / (now - lastFpsUpdate))} [MAX COMPUTE]`;
+        fpsDisplay.textContent = `FPS: ${Math.round((frameCount * 1000) / (now - lastFpsUpdate))} [DYNAMIC LOCK]`;
         frameCount = 0;
         lastFpsUpdate = now;
     }
