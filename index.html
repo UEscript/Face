@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>3D Spatial Geometry Scanner</title>
+    <title>3D Face IQ Mesh Engine</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { 
             width: 100%; 
             height: 100%; 
             overflow: hidden; 
-            background: #020203; 
+            background: #040406; 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
         }
         #app { 
@@ -36,141 +36,109 @@
             z-index: 2; 
             pointer-events: none;
         }
-        #hud { 
+        #telemetry { 
             position: absolute; 
             top: 20px; 
             left: 20px; 
             z-index: 10; 
-            padding: 14px 18px; 
-            background: rgba(2, 2, 3, 0.9); 
-            border: 1px solid #00ff66; 
-            border-radius: 6px; 
-            font-size: 11px; 
-            color: #00ff66;
+            padding: 12px 16px; 
+            background: rgba(4, 4, 6, 0.9); 
+            border: 1px solid rgba(0, 255, 150, 0.3); 
+            border-radius: 8px; 
+            font-size: 12px; 
+            color: #00ff96;
             backdrop-filter: blur(10px); 
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
             font-family: monospace;
-            line-height: 1.6;
-            letter-spacing: 0.5px;
+            line-height: 1.5;
         }
     </style>
 </head>
 <body>
 
 <div id="app">
-    <div id="hud">
-        <div>MATRIX: SOLID 3D GEOMETRY SHADER</div>
+    <div id="telemetry">
+        <div>SYSTEM: FACIAL IQ GEOMETRY ENGINE</div>
         <div id="fps">FPS: --</div>
-        <div id="tracking-state">INIT: PREPARING PIPELINE...</div>
+        <div id="status">STATUS: INITIALIZING CAM FEED...</div>
     </div>
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
 </div>
 
 <script type="module">
+// Kept the exact working CDNs from the smooth version
 import { FilesetResolver, FaceLandmarker, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const fpsDisplay = document.getElementById("fps");
-const stateDisplay = document.getElementById("tracking-state");
+const statusDisplay = document.getElementById("status");
 
-let faceLandmarker = null;
-let handLandmarker = null;
-let activeStream = null;
-let animationFrameId = null;
+let faceLandmarker;
+let handLandmarker;
 let lastVideoTime = -1;
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
 let faceTriangles = [];
 
-const HAND_TRIANGLES = [
-    [0,1,2], [0,2,5], [2,3,4], [2,4,5],       
-    [5,6,7], [5,7,8], [5,9,6],                
-    [9,10,11], [9,11,12], [9,13,10],          
-    [13,14,15], [13,15,16], [13,17,14],       
-    [17,18,19], [17,19,20], [0,17,13], [0,13,9] 
+// Hand wireframe connections from the working build
+const HAND_CONNECTIONS = [
+    [0,1], [1,2], [2,3], [3,4],           
+    [0,5], [5,6], [6,7], [7,8],           
+    [9,10], [10,11], [11,12],             
+    [13,14], [14,15], [15,16],            
+    [0,17], [17,18], [18,19], [19,20],    
+    [5,9], [9,13], [13,17],                
+    [0,5], [0,17]                         
 ];
 
-async function startGeometryEngine() {
+const HAND_EDGES = [0, 1, 2, 3, 4, 3, 2, 1, 5, 6, 7, 8, 7, 6, 9, 10, 11, 12, 11, 10, 13, 14, 15, 16, 15, 14, 17, 18, 19, 20, 19, 18, 17, 0];
+
+async function initializeSystem() {
     try {
-        stateDisplay.textContent = "INIT: LINKING LOW-LEVEL WASM COMPONENTS...";
-        
-        // Pin the internal loader to use explicit versioned asset locations
-        const vision = await FilesetResolver.forVisionTasks(
-            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-        );
-        
-        stateDisplay.textContent = "INIT: LOADING FACE DATASET...";
-        
-        // Re-allocation protection
-        if (faceLandmarker) { try { faceLandmarker.close(); } catch(e){} faceLandmarker = null; }
+        statusDisplay.textContent = "STATUS: DOWNLOADING TARGET MODELS...";
+        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
         
         faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
             baseOptions: { 
-                modelAssetPath: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/models/face_landmarker.task",
+                modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
                 delegate: "GPU"
             },
             runningMode: "VIDEO",
             numFaces: 1
         });
-        
-        // Fetch triangles immediately so we have them stored
-        faceTriangles = FaceLandmarker.getTrianglesByCpu();
 
-        stateDisplay.textContent = "INIT: LOADING HAND DATASET...";
-        if (handLandmarker) { try { handLandmarker.close(); } catch(e){} handLandmarker = null; }
-        
         handLandmarker = await HandLandmarker.createFromOptions(vision, {
             baseOptions: { 
-                modelAssetPath: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/models/hand_landmarker.task",
+                modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
                 delegate: "GPU"
             },
             runningMode: "VIDEO",
             numHands: 2
         });
 
-        stateDisplay.textContent = "INIT: REQUESTING VIDEO PIPELINE...";
-        
-        // Kill any zombie hardware stream assignments before claiming the track
-        if (activeStream) {
-            activeStream.getTracks().forEach(t => t.stop());
-        }
+        faceTriangles = FaceLandmarker.getTrianglesByCpu();
 
-        activeStream = await navigator.mediaDevices.getUserMedia({
-            video: { 
-                facingMode: "user", 
-                width: { ideal: 1280 }, 
-                height: { ideal: 720 }, 
-                frameRate: { ideal: 30 } // Dropped to stable 30fps baseline to stop iPad hardware choking on refresh
-            }
+        statusDisplay.textContent = "STATUS: RECOVERING HARDWARE FEED...";
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } }
         });
         
-        video.srcObject = activeStream;
-        
+        video.srcObject = stream;
         video.onloadedmetadata = () => {
-            video.play().catch(e => console.log("Stream play caught"));
+            video.play();
+            statusDisplay.textContent = "STATUS: LOCK ACQUIRED";
+            requestAnimationFrame(processingRenderLoop);
         };
-
-        video.addEventListener("playing", () => {
-            stateDisplay.textContent = "SCANNER LOCK: RUNNING MATRIX";
-            if (!animationFrameId) {
-                animationFrameId = requestAnimationFrame(renderLoop);
-            }
-        });
-
     } catch (err) {
-        stateDisplay.textContent = "CRITICAL BOOT FAULT: CLEAN MEMORY RESTART REQUIRED";
+        statusDisplay.textContent = "STATUS: CAM FAULT";
         console.error(err);
     }
 }
 
-function renderLoop() {
-    if (!video.videoWidth || !video.videoHeight) {
-        animationFrameId = requestAnimationFrame(renderLoop);
-        return;
-    }
-
+function processingRenderLoop() {
     if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
@@ -178,7 +146,7 @@ function renderLoop() {
 
     const timestamp = performance.now();
 
-    if (video.currentTime !== lastVideoTime && video.readyState >= 3) {
+    if (video.currentTime !== lastVideoTime) {
         lastVideoTime = video.currentTime;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -186,96 +154,110 @@ function renderLoop() {
         ctx.translate(canvas.width, 0);
         ctx.scale(-1, 1);
 
+        const faceResult = faceLandmarker.detectForVideo(video, timestamp);
+        const handResult = handLandmarker.detectForVideo(video, timestamp);
+
         const w = canvas.width;
         const h = canvas.height;
 
-        // Render Face Mesh
-        if (faceLandmarker) {
-            try {
-                const faceResult = faceLandmarker.detectForVideo(video, timestamp);
-                if (faceResult && faceResult.faceLandmarks && faceResult.faceLandmarks.length > 0) {
-                    const face = faceResult.faceLandmarks[0];
+        // --- SOLID 3D MASK SHADER ---
+        if (faceResult.faceLandmarks && faceResult.faceLandmarks.length > 0) {
+            const face = faceResult.faceLandmarks[0];
 
-                    for (let i = 0; i < faceTriangles.length; i += 3) {
-                        const p1 = face[faceTriangles[i]];
-                        const p2 = face[faceTriangles[i + 1]];
-                        const p3 = face[faceTriangles[i + 2]];
+            // Render each individual mesh triangle with lighting shading
+            for (let i = 0; i < faceTriangles.length; i += 3) {
+                const p1 = face[faceTriangles[i]];
+                const p2 = face[faceTriangles[i + 1]];
+                const p3 = face[faceTriangles[i + 2]];
 
-                        if (p1 && p2 && p3) {
-                            const x1 = p1.x * w, y1 = p1.y * h, z1 = p1.z * w;
-                            const x2 = p2.x * w, y2 = p2.y * h, z2 = p2.z * w;
-                            const x3 = p3.x * w, y3 = p3.y * h, z3 = p3.z * w;
+                if (p1 && p2 && p3) {
+                    const x1 = p1.x * w, y1 = p1.y * h, z1 = p1.z * w;
+                    const x2 = p2.x * w, y2 = p2.y * h, z2 = p2.z * w;
+                    const x3 = p3.x * w, y3 = p3.y * h, z3 = p3.z * w;
 
-                            const v1x = x2 - x1, v1y = y2 - y1, v1z = z2 - z1;
-                            const v2x = x3 - x1, v2y = y3 - y1, v2z = z3 - z1;
+                    // Compute basic math normals to determine face angle light changes
+                    const v1x = x2 - x1, v1y = y2 - y1, v1z = z2 - z1;
+                    const v2x = x3 - x1, v2y = y3 - y1, v2z = z3 - z1;
 
-                            const nx = v1y * v2z - v1z * v2y;
-                            const ny = v1z * v2x - v1x * v2z;
-                            const nz = v1x * v2y - v1y * v2x;
-                            
-                            const length = Math.sqrt(nx*nx + ny*ny + nz*nz);
-                            let lighting = 0.5; 
-                            if (length > 0) {
-                                lighting = Math.max(0.1, Math.min(1.0, (nx * 0.3 + ny * -0.4 + nz * 0.9) / length));
-                            }
-
-                            const r = Math.floor(20 + lighting * 40);
-                            const g = Math.floor(90 + lighting * 110);
-                            const b = Math.floor(35 + lighting * 55);
-                            
-                            ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.75)`;
-                            ctx.beginPath();
-                            ctx.moveTo(x1, y1);
-                            ctx.lineTo(x2, y2);
-                            ctx.lineTo(x3, y3);
-                            ctx.closePath();
-                            ctx.fill();
-
-                            ctx.strokeStyle = "rgba(0, 255, 120, 0.35)";
-                            ctx.lineWidth = 0.5;
-                            ctx.stroke();
-                        }
+                    const nx = v1y * v2z - v1z * v2y;
+                    const ny = v1z * v2x - v1x * v2z;
+                    const nz = v1x * v2y - v1y * v2x;
+                    
+                    const length = Math.sqrt(nx*nx + ny*ny + nz*nz);
+                    let lighting = 0.5; 
+                    if (length > 0) {
+                        lighting = Math.max(0.1, Math.min(1.0, (nx * 0.3 + ny * -0.4 + nz * 0.9) / length));
                     }
+
+                    // Fills the facets with the research-style shaded greens
+                    const r = Math.floor(20 + lighting * 40);
+                    const g = Math.floor(90 + lighting * 110);
+                    const b = Math.floor(35 + lighting * 55);
+                    
+                    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.75)`;
+                    ctx.beginPath();
+                    ctx.moveTo(x1, y1);
+                    ctx.lineTo(x2, y2);
+                    ctx.lineTo(x3, y3);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Draws the clean outer wire mesh lines on top of the solid sections
+                    ctx.strokeStyle = "rgba(0, 255, 120, 0.35)";
+                    ctx.lineWidth = 0.5;
+                    ctx.stroke();
                 }
-            } catch(e) {}
+            }
+
+            // Bold contrast lines for the eyes, eyebrows, and lips
+            ctx.strokeStyle = "rgba(255, 51, 102, 0.75)";
+            ctx.lineWidth = 1.8;
+            const features = [
+                [33, 160, 158, 133, 153, 144, 33], 
+                [362, 385, 387, 263, 373, 380, 362], 
+                [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84, 181, 91, 146, 61] 
+            ];
+            features.forEach(path => {
+                ctx.beginPath();
+                path.forEach((idx, step) => {
+                    const pt = face[idx];
+                    if (pt) {
+                        if (step === 0) ctx.moveTo(pt.x * w, pt.y * h);
+                        else ctx.lineTo(pt.x * w, pt.y * h);
+                    }
+                });
+                ctx.stroke();
+            });
         }
 
-        // Render Hand Mesh
-        if (handLandmarker) {
-            try {
-                const handResult = handLandmarker.detectForVideo(video, timestamp);
-                if (handResult && handResult.landmarks && handResult.landmarks.length > 0) {
-                    handResult.landmarks.forEach(hand => {
-                        ctx.fillStyle = "rgba(0, 180, 255, 0.25)"; 
-                        ctx.beginPath();
-                        HAND_TRIANGLES.forEach(([idxA, idxB, idxC]) => {
-                            const pA = hand[idxA];
-                            const pB = hand[idxB];
-                            const pC = hand[idxC];
-                            if (pA && pB && pC) {
-                                ctx.moveTo(pA.x * w, pA.y * h);
-                                ctx.lineTo(pB.x * w, pB.y * h);
-                                ctx.lineTo(pC.x * w, pC.y * h);
-                                ctx.closePath();
-                            }
-                        });
-                        ctx.fill();
+        // --- FULL EDGE HAND TRACKER ---
+        if (handResult.landmarks && handResult.landmarks.length > 0) {
+            handResult.landmarks.forEach(hand => {
+                ctx.strokeStyle = "#ffcc00"; 
+                ctx.lineWidth = 2.2;
+                ctx.beginPath();
+                HAND_CONNECTIONS.forEach(([start, end]) => {
+                    const p1 = hand[start];
+                    const p2 = hand[end];
+                    if (p1 && p2) {
+                        ctx.moveTo(p1.x * w, p1.y * h);
+                        ctx.lineTo(p2.x * w, p2.y * h);
+                    }
+                });
+                ctx.stroke();
 
-                        ctx.strokeStyle = "#00bbff";
-                        ctx.lineWidth = 1.5;
-                        ctx.beginPath();
-                        HAND_TRIANGLES.forEach(([idxA, idxB, idxC]) => {
-                            const pA = hand[idxA];
-                            const pB = hand[idxB];
-                            if (pA && pB) {
-                                ctx.moveTo(pA.x * w, pA.y * h);
-                                ctx.lineTo(pB.x * w, pB.y * h);
-                            }
-                        });
-                        ctx.stroke();
-                    });
-                }
-            } catch(e) {}
+                ctx.strokeStyle = "rgba(255, 204, 0, 0.5)";
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                HAND_EDGES.forEach((idx, step) => {
+                    const pt = hand[idx];
+                    if (pt) {
+                        if (step === 0) ctx.moveTo(pt.x * w, pt.y * h);
+                        else ctx.lineTo(pt.x * w, pt.y * h);
+                    }
+                });
+                ctx.stroke();
+            });
         }
 
         ctx.restore();
@@ -284,28 +266,16 @@ function renderLoop() {
     frameCount++;
     const now = performance.now();
     if (now >= lastFpsUpdate + 1000) {
-        fpsDisplay.textContent = `FPS: ${Math.round((frameCount * 1000) / (now - lastFpsUpdate))}`;
+        const currentFps = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
+        fpsDisplay.textContent = `FPS: ${currentFps} [GPU NATIVE]`;
         frameCount = 0;
         lastFpsUpdate = now;
     }
 
-    animationFrameId = requestAnimationFrame(renderLoop);
+    requestAnimationFrame(processingRenderLoop);
 }
 
-// Global window hook to force-clear system threads before a page destruction event
-function clearGlobalTracks() {
-    if (animationFrameId) cancelAnimationFrame(animationFrameId);
-    if (faceLandmarker) { try { faceLandmarker.close(); } catch(e){} }
-    if (handLandmarker) { try { handLandmarker.close(); } catch(e){} }
-    if (activeStream) {
-        activeStream.getTracks().forEach(track => track.stop());
-    }
-}
-
-window.addEventListener("beforeunload", clearGlobalTracks);
-window.addEventListener("unload", clearGlobalTracks);
-
-startGeometryEngine();
+initializeSystem();
 </script>
 </body>
 </html>
