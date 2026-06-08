@@ -42,11 +42,11 @@
             left: 20px; 
             z-index: 10; 
             padding: 12px 16px; 
-            background: rgba(4, 6, 10, 0.85); 
-            border: 1px solid rgba(0, 255, 150, 0.25); 
+            background: rgba(5, 5, 8, 0.85); 
+            border: 1px solid rgba(0, 245, 212, 0.2); 
             border-radius: 8px; 
             font-size: 11px; 
-            color: #00ff96;
+            color: #00f5d4;
             backdrop-filter: blur(10px); 
             font-family: monospace;
             line-height: 1.6;
@@ -58,9 +58,9 @@
 
 <div id="app">
     <div id="telemetry">
-        <div>SYSTEM: HOVERING 3D GEOMETRY ENGINE</div>
-        <div id="fps">FPS: -- [NATIVE GPU]</div>
-        <div id="status">STATUS: INITIALIZING CAPTURE...</div>
+        <div>SYSTEM: HOVERING NODE MATRIX ENGINE</div>
+        <div id="fps">FPS: -- [GPU ACCELERATED]</div>
+        <div id="status">STATUS: INITIALIZING...</div>
     </div>
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
@@ -81,38 +81,32 @@ let lastVideoTime = -1;
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
 
-// Concentric anatomical loops matching the official face topology grid
-const FACE_CONTOURS = [
-    [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109], // Outer Frame
-    [21, 70, 63, 105, 66, 107, 9, 336, 296, 334, 293, 300, 276, 356], // Brow line connection
-    [168, 6, 197, 195, 5, 4, 1, 19, 94, 2], // Nose structural ridge
-    [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246], // Left Eye ring
-    [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398], // Right Eye ring
-    [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185], // Lips Outer Perimeter
-    [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 418, 312, 311, 310, 13, 80, 81, 82, 96]   // Lips Inner Perimeter
-];
+// Logical feature paths for clean, non-crossing line connections
+const FACE_PATHS = {
+    outerContour: [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10],
+    leftEye: [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246, 33],
+    rightEye: [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398, 362],
+    outerLips: [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185, 61],
+    innerLips: [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 418, 312, 311, 310, 13, 80, 81, 82, 96, 78],
+    leftBrow: [70, 63, 105, 66, 107, 55, 65, 52, 53, 46],
+    rightBrow: [336, 296, 334, 293, 300, 276, 283, 282, 295, 285],
+    noseRidge: [168, 6, 197, 195, 5, 4, 1, 19, 94, 2]
+};
 
-// Structural cross-links to weave the contours together into a smooth 3D grid patch
-const FACE_CROSS_LINKS = [
-    [21, 33], [54, 7], [103, 163], [67, 144], [109, 145], [10, 153], 
-    [338, 374], [297, 373], [332, 390], [284, 249], [251, 263],
-    [61, 2], [291, 2], [152, 17], [10, 168], [168, 6], [2, 0]
-];
-
-// Precise paths for rendering solid hand surface geometry
-const HAND_FINGERS = [
-    [0, 1, 2, 3, 4],     // Thumb
-    [0, 5, 6, 7, 8],     // Index
-    [0, 9, 10, 11, 12],  // Middle
-    [0, 13, 14, 15, 16], // Ring
-    [0, 17, 18, 19, 20]  // Pinky
+const HAND_CONNECTIONS = [
+    [0,1], [1,2], [2,3], [3,4],           
+    [0,5], [5,6], [6,7], [7,8],           
+    [9,10], [10,11], [11,12],             
+    [13,14], [14,15], [15,16],            
+    [0,17], [17,18], [18,19], [19,20],    
+    [5,9], [9,13], [13,17]
 ];
 
 async function initializeSystem() {
     try {
-        statusDisplay.textContent = "STATUS: INITIALIZING HARDWARE...";
+        statusDisplay.textContent = "STATUS: REQUESTING HARDWARE...";
         
-        // Asks for the camera instantly to bypass iPadOS security lockout
+        // Boot webcam immediately on line 1 to eliminate Safari permissions locks
         const stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } }
         });
@@ -125,7 +119,7 @@ async function initializeSystem() {
             };
         });
 
-        statusDisplay.textContent = "STATUS: INTEGRATING MODELS...";
+        statusDisplay.textContent = "STATUS: INITIALIZING AI MODELS...";
         const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
         
         faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
@@ -146,13 +140,27 @@ async function initializeSystem() {
             numHands: 2
         });
 
-        statusDisplay.textContent = "STATUS: ACTIVE";
+        statusDisplay.textContent = "STATUS: RUNNING (MATRIX CONTROLS)";
         requestAnimationFrame(processingRenderLoop);
 
     } catch (err) {
-        statusDisplay.textContent = "STATUS: CAM INTERRUPT";
+        statusDisplay.textContent = "STATUS: HARDWARE ERROR";
         console.error(err);
     }
+}
+
+function drawStructuredPath(ctx, landmarks, pathIndices, w, h, strokeColor, lineWidth) {
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = lineWidth;
+    ctx.beginPath();
+    pathIndices.forEach((idx, i) => {
+        const pt = landmarks[idx];
+        if (pt) {
+            if (i === 0) ctx.moveTo(pt.x * w, pt.y * h);
+            else ctx.lineTo(pt.x * w, pt.y * h);
+        }
+    });
+    ctx.stroke();
 }
 
 function processingRenderLoop() {
@@ -177,116 +185,56 @@ function processingRenderLoop() {
         const w = canvas.width;
         const h = canvas.height;
 
-        // --- HIGH-TECH CLEAN FACE MESH (RESEARCH DESIGN) ---
+        // --- FACE STRUCTURAL MESH ---
         if (faceResult && faceResult.faceLandmarks && faceResult.faceLandmarks.length > 0) {
             const face = faceResult.faceLandmarks[0];
 
-            // 1. Draw structural geometric loop lines
-            ctx.strokeStyle = "rgba(0, 255, 180, 0.45)";
-            ctx.lineWidth = 1.0;
-            FACE_CONTOURS.forEach(contour => {
+            // 1. Draw ALL raw tracking matrix points across face as micro-dots
+            ctx.fillStyle = "rgba(0, 245, 212, 0.7)";
+            face.forEach(pt => {
                 ctx.beginPath();
-                contour.forEach((idx, step) => {
-                    const pt = face[idx];
-                    if (pt) {
-                        if (step === 0) ctx.moveTo(pt.x * w, pt.y * h);
-                        else ctx.lineTo(pt.x * w, pt.y * h);
-                    }
-                });
-                ctx.closePath();
-                ctx.stroke();
+                ctx.arc(pt.x * w, pt.y * h, 1.8, 0, 2 * Math.PI);
+                ctx.fill();
             });
 
-            // 2. Draw cross-connecting architecture links to complete the 3D grid appearance
-            ctx.beginPath();
-            FACE_CROSS_LINKS.forEach(([startIdx, endIdx]) => {
-                const p1 = face[startIdx];
-                const p2 = face[endIdx];
-                if (p1 && p2) {
-                    ctx.moveTo(p1.x * w, p1.y * h);
-                    ctx.lineTo(p2.x * w, p2.y * h);
-                }
-            });
-            ctx.stroke();
+            // 2. Connect the dots logically into distinct tracking loops
+            // Cyan: Face boundary framework, nose, and brows
+            drawStructuredPath(ctx, face, FACE_PATHS.outerContour, w, h, "#00f5d4", 1.8);
+            drawStructuredPath(ctx, face, FACE_PATHS.leftBrow, w, h, "#00f5d4", 1.5);
+            drawStructuredPath(ctx, face, FACE_PATHS.rightBrow, w, h, "#00f5d4", 1.5);
+            drawStructuredPath(ctx, face, FACE_PATHS.noseRidge, w, h, "#00f5d4", 1.5);
 
-            // 3. Render clean structural node anchors at key tracking intersections
-            ctx.fillStyle = "#ff0066";
-            const structuralAnchors = [10, 152, 33, 263, 1, 61, 291];
-            structuralAnchors.forEach(idx => {
-                const pt = face[idx];
-                if (pt) {
-                    ctx.beginPath();
-                    ctx.arc(pt.x * w, pt.y * h, 3.5, 0, 2 * Math.PI);
-                    ctx.fill();
-                }
-            });
-
-            // 4. Clean neon tracking halos for eyes and lips
-            ctx.strokeStyle = "#ff0066";
-            ctx.lineWidth = 2.0;
-            const trackingTargets = [FACE_CONTOURS[3], FACE_CONTOURS[4], FACE_CONTOURS[5]];
-            trackingTargets.forEach(path => {
-                ctx.beginPath();
-                path.forEach((idx, step) => {
-                    const pt = face[idx];
-                    if (pt) {
-                        if (step === 0) ctx.moveTo(pt.x * w, pt.y * h);
-                        else ctx.lineTo(pt.x * w, pt.y * h);
-                    }
-                });
-                ctx.closePath();
-                ctx.stroke();
-            });
+            // Hot Pink: Target scanners for Eyes and Mouth
+            drawStructuredPath(ctx, face, FACE_PATHS.leftEye, w, h, "#ff007f", 2.0);
+            drawStructuredPath(ctx, face, FACE_PATHS.rightEye, w, h, "#ff007f", 2.0);
+            drawStructuredPath(ctx, face, FACE_PATHS.outerLips, w, h, "#ff007f", 2.0);
+            drawStructuredPath(ctx, face, FACE_PATHS.innerLips, w, h, "#ff007f", 1.5);
         }
 
-        // --- MATCHING HOVERING HAND MESH ARCHITECTURE ---
+        // --- HAND STRUCTURAL MESH ---
         if (handResult && handResult.landmarks && handResult.landmarks.length > 0) {
             handResult.landmarks.forEach(hand => {
-                
-                // 1. Solid surface panel fills between finger/palm nodes
-                ctx.fillStyle = "rgba(255, 204, 0, 0.18)";
-                for (let i = 0; i < HAND_FINGERS.length - 1; i++) {
-                    const f1 = HAND_FINGERS[i];
-                    const f2 = HAND_FINGERS[i + 1];
-                    
-                    ctx.beginPath();
-                    ctx.moveTo(hand[f1[0]].x * w, hand[f1[0]].y * h);
-                    for (let j = 1; j < f1.length; j++) ctx.lineTo(hand[f1[j]].x * w, hand[f1[j]].y * h);
-                    for (let j = f2.length - 1; j >= 0; j--) ctx.lineTo(hand[f2[j]].x * w, hand[f2[j]].y * h);
-                    ctx.closePath();
-                    ctx.fill();
-                }
-
-                // 2. High-contrast structural gold wireframe lines
-                ctx.strokeStyle = "#ffcc00"; 
-                ctx.lineWidth = 2.2;
-                HAND_FINGERS.forEach(finger => {
-                    ctx.beginPath();
-                    finger.forEach((idx, step) => {
-                        const pt = hand[idx];
-                        if (pt) {
-                            if (step === 0) ctx.moveTo(pt.x * w, pt.y * h);
-                            else ctx.lineTo(pt.x * w, pt.y * h);
-                        }
-                    });
-                    ctx.stroke();
-                });
-
-                // Cross-link palm base elements to finalize structural grid appearance
-                ctx.beginPath();
-                ctx.moveTo(hand[5].x * w, hand[5].y * h);
-                ctx.lineTo(hand[9].x * w, hand[9].y * h);
-                ctx.lineTo(hand[13].x * w, hand[13].y * h);
-                ctx.lineTo(hand[17].x * w, hand[17].y * h);
-                ctx.stroke();
-
-                // 3. Structural joint node dots
+                // 1. Draw all hand joints as distinct yellow tracking dots
                 ctx.fillStyle = "#ffcc00";
                 hand.forEach(pt => {
                     ctx.beginPath();
                     ctx.arc(pt.x * w, pt.y * h, 3, 0, 2 * Math.PI);
                     ctx.fill();
                 });
+
+                // 2. Connect the hand dots cleanly along the bone structure paths
+                ctx.strokeStyle = "#ffcc00"; 
+                ctx.lineWidth = 2.2;
+                ctx.beginPath();
+                HAND_CONNECTIONS.forEach(([start, end]) => {
+                    const p1 = hand[start];
+                    const p2 = hand[end];
+                    if (p1 && p2) {
+                        ctx.moveTo(p1.x * w, p1.y * h);
+                        ctx.lineTo(p2.x * w, p2.y * h);
+                    }
+                });
+                ctx.stroke();
             });
         }
 
@@ -297,7 +245,7 @@ function processingRenderLoop() {
     const now = performance.now();
     if (now >= lastFpsUpdate + 1000) {
         const currentFps = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
-        fpsDisplay.textContent = `FPS: ${currentFps} [GPU NATIVE]`;
+        fpsDisplay.textContent = `FPS: ${currentFps} [GPU ACCELERATED]`;
         frameCount = 0;
         lastFpsUpdate = now;
     }
