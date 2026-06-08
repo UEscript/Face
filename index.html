@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>3D Dual-Matrix Lock Rig</title>
+    <title>Multi-Angle 3D Lock Rig</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
@@ -28,8 +28,9 @@
 
 <div id="app">
     <div id="telemetry">
-        <div>SYSTEM: DUAL 3D MATRIX HARMONY</div>
-        <div id="fps">FPS: -- [DYNAMIC LOCK]</div>
+        <div>SYSTEM: PROFILE-ADAPTIVE 3D MATRIX</div>
+        <div id="view-mode">VIEW: CALCULATING...</div>
+        <div id="fps">FPS: --</div>
     </div>
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
@@ -40,12 +41,12 @@ const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const fpsDisplay = document.getElementById("fps");
+const viewDisplay = document.getElementById("view-mode");
 
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
 window.latestHandResults = null;
 
-// Direct hand bone link infrastructure
 const HAND_LINKS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[9,10],[10,11],[11,12],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
 
 navigator.mediaDevices.getUserMedia({
@@ -53,20 +54,19 @@ navigator.mediaDevices.getUserMedia({
 }).then(stream => {
     video.srcObject = stream;
     video.play();
-    initializeDualLock();
+    initializeAdaptiveLock();
 });
 
-function initializeDualLock() {
+function initializeAdaptiveLock() {
     const faceMesh = new FaceMesh({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
 
-    // Enabled strict structural tracking options to properly calculate 3D side profiles
     faceMesh.setOptions({
         maxNumFaces: 1,
-        refineLandmarks: true, 
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.6
+        refineLandmarks: true, // Crucial for structural lip/eye skin deformations
+        minDetectionConfidence: 0.45,
+        minTrackingConfidence: 0.45
     });
 
     const hands = new Hands({
@@ -76,12 +76,12 @@ function initializeDualLock() {
     hands.setOptions({
         maxNumHands: 2,
         modelComplexity: 1,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
+        minDetectionConfidence: 0.45,
+        minTrackingConfidence: 0.45
     });
 
     faceMesh.onResults((results) => {
-        renderDualMatrix(results);
+        renderAdaptiveMatrix(results);
     });
 
     hands.onResults((results) => {
@@ -99,7 +99,7 @@ function initializeDualLock() {
     camera.start();
 }
 
-function renderDualMatrix(faceResults) {
+function renderAdaptiveMatrix(faceResults) {
     const w = canvas.width;
     const h = canvas.height;
     
@@ -108,15 +108,40 @@ function renderDualMatrix(faceResults) {
     ctx.translate(w, 0);
     ctx.scale(-1, 1);
 
-    // --- TONED DOWN 3D FACE MESH ---
     if (faceResults.multiFaceLandmarks && faceResults.multiFaceLandmarks.length > 0) {
         const landmarks = faceResults.multiFaceLandmarks[0];
 
-        // Toned down to a transparent, thin blue glow so you can see your face clearly
-        ctx.strokeStyle = "rgba(0, 255, 255, 0.15)";
-        ctx.lineWidth = 0.8;
+        // --- PROFILE DETECTION ENGINE ---
+        // Calculate orientation by comparing horizontal distance between nose bridge (1) and outer head bounds
+        const leftBoundary = landmarks[234].x;
+        const rightBoundary = landmarks[454].x;
+        const noseCenter = landmarks[1].x;
+
+        const leftSpan = Math.abs(noseCenter - leftBoundary);
+        const rightSpan = Math.abs(rightBoundary - noseCenter);
+        const symmetryRatio = leftSpan / rightSpan;
+
+        let isSideProfile = false;
+        if (symmetryRatio < 0.35 || symmetryRatio > 2.8) {
+            isSideProfile = true;
+            viewDisplay.textContent = "VIEW: 3D SIDE PROFILE LOCK";
+        } else {
+            viewDisplay.textContent = "VIEW: 3D FRONT LOCK";
+        }
+
+        // --- ADAPTIVE GRAPHICS DENSITY ---
+        // Tone down background wireframe grids for clear face visibility
+        ctx.strokeStyle = "rgba(0, 255, 255, 0.12)";
+        ctx.lineWidth = 0.7;
         ctx.beginPath();
+        
         for (const connection of FACEMESH_TESSELATION) {
+            // If side profile is active, skip drawing hidden back-head links to eliminate overlapping "wiggle" artifacts
+            if (isSideProfile) {
+                const zDepth = (landmarks[connection[0]].z + landmarks[connection[1]].z) / 2;
+                if (zDepth > 0.02) continue; 
+            }
+            
             const from = landmarks[connection[0]];
             const to = landmarks[connection[1]];
             if (from && to) {
@@ -126,7 +151,7 @@ function renderDualMatrix(faceResults) {
         }
         ctx.stroke();
 
-        // High-Contrast Accent Rings for Key Features (Eyes, Brows, Lips)
+        // --- STRETCH-COMPLIANT FEATURE PATHS ---
         const featurePaths = [
             { path: FACEMESH_RIGHT_EYE, color: "#00ffff", width: 1.8 },
             { path: FACEMESH_LEFT_EYE, color: "#00ffff", width: 1.8 },
@@ -150,12 +175,15 @@ function renderDualMatrix(faceResults) {
             ctx.stroke();
         });
 
-        // Small, sharp matrix junction dots
+        // Dynamic coordinate node points (React completely to skin stretches)
         ctx.fillStyle = "#33ffff";
         for (let i = 0; i < landmarks.length; i++) {
             const pt = landmarks[i];
+            // Discard visual nodes that slip behind perspective planes during side views
+            if (isSideProfile && pt.z > 0.03) continue;
+
             ctx.beginPath();
-            ctx.arc(pt.x * w, pt.y * h, 1.5, 0, 2 * Math.PI);
+            ctx.arc(pt.x * w, pt.y * h, 1.4, 0, 2 * Math.PI);
             ctx.fill();
         }
     }
@@ -164,8 +192,6 @@ function renderDualMatrix(faceResults) {
     const activeHands = window.latestHandResults;
     if (activeHands && activeHands.multiHandLandmarks) {
         activeHands.multiHandLandmarks.forEach(handLandmarks => {
-            
-            // Structural lines matching the clean face styling
             ctx.strokeStyle = "rgba(0, 255, 255, 0.4)";
             ctx.lineWidth = 1.5;
             ctx.beginPath();
@@ -179,7 +205,6 @@ function renderDualMatrix(faceResults) {
             }
             ctx.stroke();
 
-            // Sharp cyan joint nodes
             ctx.fillStyle = "#33ffff";
             for (const pt of handLandmarks) {
                 ctx.beginPath();
@@ -191,11 +216,10 @@ function renderDualMatrix(faceResults) {
 
     ctx.restore();
 
-    // Performance Tracker
     frameCount++;
     const now = performance.now();
     if (now >= lastFpsUpdate + 1000) {
-        fpsDisplay.textContent = `FPS: ${Math.round((frameCount * 1000) / (now - lastFpsUpdate))} [DYNAMIC LOCK]`;
+        fpsDisplay.textContent = `FPS: ${Math.round((frameCount * 1000) / (now - lastFpsUpdate))}`;
         frameCount = 0;
         lastFpsUpdate = now;
     }
