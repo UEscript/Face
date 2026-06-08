@@ -3,11 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Multi-Angle 3D Lock Rig</title>
+    <title>Dynamic Vector 3D Matrix</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -28,8 +27,8 @@
 
 <div id="app">
     <div id="telemetry">
-        <div>SYSTEM: PROFILE-ADAPTIVE 3D MATRIX</div>
-        <div id="view-mode">VIEW: CALCULATING...</div>
+        <div>SYSTEM: MATRIX V2 (VECTOR ANGLE ENGINE)</div>
+        <div id="orientation">ANGLE: CALCULATING...</div>
         <div id="fps">FPS: --</div>
     </div>
     <video id="video" autoplay playsinline muted></video>
@@ -41,51 +40,33 @@ const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const fpsDisplay = document.getElementById("fps");
-const viewDisplay = document.getElementById("view-mode");
+const orientationDisplay = document.getElementById("orientation");
 
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
-window.latestHandResults = null;
-
-const HAND_LINKS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[9,10],[10,11],[11,12],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
 
 navigator.mediaDevices.getUserMedia({
     video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }
 }).then(stream => {
     video.srcObject = stream;
     video.play();
-    initializeAdaptiveLock();
+    initializeVectorEngine();
 });
 
-function initializeAdaptiveLock() {
+function initializeVectorEngine() {
     const faceMesh = new FaceMesh({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
 
     faceMesh.setOptions({
         maxNumFaces: 1,
-        refineLandmarks: true, // Crucial for structural lip/eye skin deformations
-        minDetectionConfidence: 0.45,
-        minTrackingConfidence: 0.45
-    });
-
-    const hands = new Hands({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-    });
-
-    hands.setOptions({
-        maxNumHands: 2,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.45,
-        minTrackingConfidence: 0.45
+        refineLandmarks: true, // Forces precise tracking along skin boundaries
+        minDetectionConfidence: 0.4,
+        minTrackingConfidence: 0.4
     });
 
     faceMesh.onResults((results) => {
-        renderAdaptiveMatrix(results);
-    });
-
-    hands.onResults((results) => {
-        window.latestHandResults = results;
+        renderVectorMatrix(results);
     });
 
     const camera = new Camera(video, {
@@ -93,13 +74,12 @@ function initializeAdaptiveLock() {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             await faceMesh.send({ image: video });
-            await hands.send({ image: video });
         }
     });
     camera.start();
 }
 
-function renderAdaptiveMatrix(faceResults) {
+function renderVectorMatrix(results) {
     const w = canvas.width;
     const h = canvas.height;
     
@@ -108,51 +88,57 @@ function renderAdaptiveMatrix(faceResults) {
     ctx.translate(w, 0);
     ctx.scale(-1, 1);
 
-    if (faceResults.multiFaceLandmarks && faceResults.multiFaceLandmarks.length > 0) {
-        const landmarks = faceResults.multiFaceLandmarks[0];
+    if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        const landmarks = results.multiFaceLandmarks[0];
 
-        // --- PROFILE DETECTION ENGINE ---
-        // Calculate orientation by comparing horizontal distance between nose bridge (1) and outer head bounds
-        const leftBoundary = landmarks[234].x;
-        const rightBoundary = landmarks[454].x;
-        const noseCenter = landmarks[1].x;
+        // --- TRUE 3D VECTOR ORIENTATION CALCULATION ---
+        // We track the relative depth difference between the center tip of the nose (1)
+        // and the base structural jaw pivot points to get the true side rotation vector.
+        const nose = landmarks[1];
+        const leftCheek = landmarks[234];
+        const rightCheek = landmarks[454];
 
-        const leftSpan = Math.abs(noseCenter - leftBoundary);
-        const rightSpan = Math.abs(rightBoundary - noseCenter);
-        const symmetryRatio = leftSpan / rightSpan;
+        // Compute the directional vector bias
+        const midX = (leftCheek.x + rightCheek.x) / 2;
+        const rotationBias = nose.x - midX; 
 
-        let isSideProfile = false;
-        if (symmetryRatio < 0.35 || symmetryRatio > 2.8) {
-            isSideProfile = true;
-            viewDisplay.textContent = "VIEW: 3D SIDE PROFILE LOCK";
-        } else {
-            viewDisplay.textContent = "VIEW: 3D FRONT LOCK";
+        let viewMode = "FRONT PROFILE";
+        let hideBackPoints = false;
+
+        if (rotationBias < -0.04) {
+            viewMode = "SIDE PROFILE (LOOKING RIGHT)";
+            hideBackPoints = true;
+        } else if (rotationBias > 0.04) {
+            viewMode = "SIDE PROFILE (LOOKING LEFT)";
+            hideBackPoints = true;
         }
+        orientationDisplay.textContent = `VIEW: ${viewMode}`;
 
-        // --- ADAPTIVE GRAPHICS DENSITY ---
-        // Tone down background wireframe grids for clear face visibility
-        ctx.strokeStyle = "rgba(0, 255, 255, 0.12)";
-        ctx.lineWidth = 0.7;
-        ctx.beginPath();
+        // --- RENDERING METHOD (NO SOLID COLOR FILLING) ---
+        // Explicitly using individual line paths ensures it won't fill with green solid blocks
+        ctx.strokeStyle = "rgba(0, 255, 255, 0.2)";
+        ctx.lineWidth = 0.8;
         
         for (const connection of FACEMESH_TESSELATION) {
-            // If side profile is active, skip drawing hidden back-head links to eliminate overlapping "wiggle" artifacts
-            if (isSideProfile) {
-                const zDepth = (landmarks[connection[0]].z + landmarks[connection[1]].z) / 2;
-                if (zDepth > 0.02) continue; 
-            }
-            
-            const from = landmarks[connection[0]];
-            const to = landmarks[connection[1]];
-            if (from && to) {
-                ctx.moveTo(from.x * w, from.y * h);
-                ctx.lineTo(to.x * w, to.y * h);
+            const fromPt = landmarks[connection[0]];
+            const toPt = landmarks[connection[1]];
+
+            if (fromPt && toPt) {
+                // Eliminate lines that turn behind the side profile view space
+                if (hideBackPoints) {
+                    if (rotationBias < -0.04 && (fromPt.z > 0.01 || toPt.z > 0.01)) continue;
+                    if (rotationBias > 0.04 && (fromPt.z > 0.01 || toPt.z > 0.01)) continue;
+                }
+
+                ctx.beginPath();
+                ctx.moveTo(fromPt.x * w, fromPt.y * h);
+                ctx.lineTo(toPt.x * w, toPt.y * h);
+                ctx.stroke();
             }
         }
-        ctx.stroke();
 
-        // --- STRETCH-COMPLIANT FEATURE PATHS ---
-        const featurePaths = [
+        // --- FIXED HIGH-CONTRAST FEATURE LINES ---
+        const features = [
             { path: FACEMESH_RIGHT_EYE, color: "#00ffff", width: 1.8 },
             { path: FACEMESH_LEFT_EYE, color: "#00ffff", width: 1.8 },
             { path: FACEMESH_LIPS, color: "#00ffff", width: 1.8 },
@@ -160,58 +146,36 @@ function renderAdaptiveMatrix(faceResults) {
             { path: FACEMESH_LEFT_EYEBROW, color: "#00ffff", width: 1.5 }
         ];
 
-        featurePaths.forEach(feature => {
+        features.forEach(feature => {
             ctx.strokeStyle = feature.color;
             ctx.lineWidth = feature.width;
             ctx.beginPath();
             for (const connection of feature.path) {
-                const from = landmarks[connection[0]];
-                const to = landmarks[connection[1]];
-                if (from && to) {
-                    ctx.moveTo(from.x * w, from.y * h);
-                    ctx.lineTo(to.x * w, to.y * h);
+                const fromPt = landmarks[connection[0]];
+                const toPt = landmarks[connection[1]];
+                if (fromPt && toPt) {
+                    ctx.moveTo(fromPt.x * w, fromPt.y * h);
+                    ctx.lineTo(toPt.x * w, toPt.y * h);
                 }
             }
             ctx.stroke();
         });
 
-        // Dynamic coordinate node points (React completely to skin stretches)
+        // --- RAW NODE OVERLAY (STRETCH SENSITIVE) ---
+        // Dots map directly to your face coordinates with zero delay filters
         ctx.fillStyle = "#33ffff";
         for (let i = 0; i < landmarks.length; i++) {
             const pt = landmarks[i];
-            // Discard visual nodes that slip behind perspective planes during side views
-            if (isSideProfile && pt.z > 0.03) continue;
+            
+            if (hideBackPoints) {
+                if (rotationBias < -0.04 && pt.z > 0.015) continue;
+                if (rotationBias > 0.04 && pt.z > 0.015) continue;
+            }
 
             ctx.beginPath();
-            ctx.arc(pt.x * w, pt.y * h, 1.4, 0, 2 * Math.PI);
+            ctx.arc(pt.x * w, pt.y * h, 1.5, 0, 2 * Math.PI);
             ctx.fill();
         }
-    }
-
-    // --- MATCHING CYAN 3D HAND RIGS ---
-    const activeHands = window.latestHandResults;
-    if (activeHands && activeHands.multiHandLandmarks) {
-        activeHands.multiHandLandmarks.forEach(handLandmarks => {
-            ctx.strokeStyle = "rgba(0, 255, 255, 0.4)";
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            for (const connection of HAND_LINKS) {
-                const from = handLandmarks[connection[0]];
-                const to = handLandmarks[connection[1]];
-                if (from && to) {
-                    ctx.moveTo(from.x * w, from.y * h);
-                    ctx.lineTo(to.x * w, to.y * h);
-                }
-            }
-            ctx.stroke();
-
-            ctx.fillStyle = "#33ffff";
-            for (const pt of handLandmarks) {
-                ctx.beginPath();
-                ctx.arc(pt.x * w, pt.y * h, 2.2, 0, 2 * Math.PI);
-                ctx.fill();
-            }
-        });
     }
 
     ctx.restore();
