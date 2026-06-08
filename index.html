@@ -77,12 +77,13 @@ const stateDisplay = document.getElementById("tracking-state");
 
 let faceLandmarker;
 let handLandmarker;
+let activeStream = null;
+let animationFrameId = null;
 let lastVideoTime = -1;
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
 let faceTriangles = [];
 
-// Solid 3D surface mapping indices for hands
 const HAND_TRIANGLES = [
     [0,1,2], [0,2,5], [2,3,4], [2,4,5],       
     [5,6,7], [5,7,8], [5,9,6],                
@@ -93,12 +94,15 @@ const HAND_TRIANGLES = [
 
 async function startGeometryEngine() {
     try {
-        stateDisplay.textContent = "GEOMETRY MASK: LINKING CORE LIBRARIES...";
+        stateDisplay.textContent = "GEOMETRY MASK: FETCHING CDN ASSETS...";
+        
+        // Use CDN locator base for tasks to avoid Google Storage dropouts
         const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
         
+        // Swapped to high-availability jsDelivr CDN mirrors for the model tasks
         faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
             baseOptions: { 
-                modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
+                modelAssetPath: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/models/face_landmarker.task",
                 delegate: "GPU"
             },
             runningMode: "VIDEO",
@@ -107,26 +111,31 @@ async function startGeometryEngine() {
 
         handLandmarker = await HandLandmarker.createFromOptions(vision, {
             baseOptions: { 
-                modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+                modelAssetPath: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/models/hand_landmarker.task",
                 delegate: "GPU"
             },
             runningMode: "VIDEO",
             numHands: 2
         });
 
-        // Safe Initialization: Extract topology map only after models are fully instantiated
         faceTriangles = FaceLandmarker.getTrianglesByCpu();
 
-        stateDisplay.textContent = "GEOMETRY MASK: OPENING MEDIA STREAM...";
-        const stream = await navigator.mediaDevices.getUserMedia({
+        stateDisplay.textContent = "GEOMETRY MASK: REQUESTING CAMERA...";
+        activeStream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } }
         });
         
-        video.srcObject = stream;
+        video.srcObject = activeStream;
         
+        video.onloadedmetadata = () => {
+            video.play().catch(e => console.log("Play interrupted"));
+        };
+
         video.addEventListener("playing", () => {
-            stateDisplay.textContent = "GEOMETRY MASK: STREAM ACTIVE";
-            requestAnimationFrame(renderLoop);
+            stateDisplay.textContent = "GEOMETRY MASK: ACTIVE LOCK";
+            if (!animationFrameId) {
+                animationFrameId = requestAnimationFrame(renderLoop);
+            }
         });
     } catch (err) {
         stateDisplay.textContent = "CRITICAL BOOT FAULT: PIPELINE DEADLOCK";
@@ -136,7 +145,7 @@ async function startGeometryEngine() {
 
 function renderLoop() {
     if (!video.videoWidth || !video.videoHeight) {
-        requestAnimationFrame(renderLoop);
+        animationFrameId = requestAnimationFrame(renderLoop);
         return;
     }
 
@@ -180,7 +189,6 @@ function renderLoop() {
                     const x2 = p2.x * w, y2 = p2.y * h, z2 = p2.z * w;
                     const x3 = p3.x * w, y3 = p3.y * h, z3 = p3.z * w;
 
-                    // Calculate face normals for 3D light distribution shading
                     const v1x = x2 - x1, v1y = y2 - y1, v1z = z2 - z1;
                     const v2x = x3 - x1, v2y = y3 - y1, v2z = z3 - z1;
 
@@ -195,7 +203,6 @@ function renderLoop() {
                         lighting = Math.max(0.1, Math.min(1.0, (nx * 0.3 + ny * -0.4 + nz * 0.9) / length));
                     }
 
-                    // ResearchGate palette: Organic shaded green panels
                     const r = Math.floor(20 + lighting * 40);
                     const g = Math.floor(90 + lighting * 110);
                     const b = Math.floor(35 + lighting * 55);
@@ -208,7 +215,6 @@ function renderLoop() {
                     ctx.closePath();
                     ctx.fill();
 
-                    // Wireframe grid lines on top of the shaded faces
                     ctx.strokeStyle = "rgba(0, 255, 120, 0.35)";
                     ctx.lineWidth = 0.5;
                     ctx.stroke();
@@ -262,8 +268,16 @@ function renderLoop() {
         lastFpsUpdate = now;
     }
 
-    requestAnimationFrame(renderLoop);
+    animationFrameId = requestAnimationFrame(renderLoop);
 }
+
+// Active Safety Clean-up Event: Realeases camera pins instantly during page resets
+window.addEventListener("beforeunload", () => {
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    if (activeStream) {
+        activeStream.getTracks().forEach(track => track.stop());
+    }
+});
 
 startGeometryEngine();
 </script>
