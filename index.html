@@ -60,7 +60,7 @@
     <div id="hud">
         <div>MATRIX: SOLID 3D GEOMETRY SHADER</div>
         <div id="fps">FPS: --</div>
-        <div id="tracking-state">GEOMETRY MASK: CALCULATING...</div>
+        <div id="tracking-state">GEOMETRY MASK: INITIALIZING SYSTEM...</div>
     </div>
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
@@ -82,6 +82,7 @@ let frameCount = 0;
 let lastFpsUpdate = performance.now();
 let faceTriangles = [];
 
+// Solid 3D surface mapping indices for hands
 const HAND_TRIANGLES = [
     [0,1,2], [0,2,5], [2,3,4], [2,4,5],       
     [5,6,7], [5,7,8], [5,9,6],                
@@ -92,6 +93,7 @@ const HAND_TRIANGLES = [
 
 async function startGeometryEngine() {
     try {
+        stateDisplay.textContent = "GEOMETRY MASK: LINKING CORE LIBRARIES...";
         const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
         
         faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
@@ -112,26 +114,27 @@ async function startGeometryEngine() {
             numHands: 2
         });
 
+        // Safe Initialization: Extract topology map only after models are fully instantiated
         faceTriangles = FaceLandmarker.getTrianglesByCpu();
 
+        stateDisplay.textContent = "GEOMETRY MASK: OPENING MEDIA STREAM...";
         const stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } }
         });
         
         video.srcObject = stream;
         
-        // Anti-Lock Change: Explicitly waiting for hardware frames to stream before running calculations
         video.addEventListener("playing", () => {
+            stateDisplay.textContent = "GEOMETRY MASK: STREAM ACTIVE";
             requestAnimationFrame(renderLoop);
         });
     } catch (err) {
-        stateDisplay.textContent = "CRITICAL BOOT FAULT";
+        stateDisplay.textContent = "CRITICAL BOOT FAULT: PIPELINE DEADLOCK";
         console.error(err);
     }
 }
 
 function renderLoop() {
-    // Safety check: skip the processing frame if video dimensions aren't fully resolved yet
     if (!video.videoWidth || !video.videoHeight) {
         requestAnimationFrame(renderLoop);
         return;
@@ -144,7 +147,6 @@ function renderLoop() {
 
     const timestamp = performance.now();
 
-    // Only process if the webcam has actually sent a brand new frame
     if (video.currentTime !== lastVideoTime && video.readyState >= 3) {
         lastVideoTime = video.currentTime;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -159,7 +161,7 @@ function renderLoop() {
         const w = canvas.width;
         const h = canvas.height;
 
-        // --- 3D FACE SOLID MASK SHADER ---
+        // --- 3D SOLID SHADED FACE MASK ---
         if (faceResult.faceLandmarks && faceResult.faceLandmarks.length > 0) {
             const face = faceResult.faceLandmarks[0];
             stateDisplay.textContent = "GEOMETRY MASK: SOLID LOCK";
@@ -178,6 +180,7 @@ function renderLoop() {
                     const x2 = p2.x * w, y2 = p2.y * h, z2 = p2.z * w;
                     const x3 = p3.x * w, y3 = p3.y * h, z3 = p3.z * w;
 
+                    // Calculate face normals for 3D light distribution shading
                     const v1x = x2 - x1, v1y = y2 - y1, v1z = z2 - z1;
                     const v2x = x3 - x1, v2y = y3 - y1, v2z = z3 - z1;
 
@@ -192,11 +195,12 @@ function renderLoop() {
                         lighting = Math.max(0.1, Math.min(1.0, (nx * 0.3 + ny * -0.4 + nz * 0.9) / length));
                     }
 
-                    const r = Math.floor(25 + lighting * 45);
-                    const g = Math.floor(75 + lighting * 120);
-                    const b = Math.floor(40 + lighting * 70);
+                    // ResearchGate palette: Organic shaded green panels
+                    const r = Math.floor(20 + lighting * 40);
+                    const g = Math.floor(90 + lighting * 110);
+                    const b = Math.floor(35 + lighting * 55);
                     
-                    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.72)`;
+                    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.75)`;
                     ctx.beginPath();
                     ctx.moveTo(x1, y1);
                     ctx.lineTo(x2, y2);
@@ -204,19 +208,20 @@ function renderLoop() {
                     ctx.closePath();
                     ctx.fill();
 
-                    ctx.strokeStyle = "rgba(0, 255, 110, 0.28)";
-                    ctx.lineWidth = 0.45;
+                    // Wireframe grid lines on top of the shaded faces
+                    ctx.strokeStyle = "rgba(0, 255, 120, 0.35)";
+                    ctx.lineWidth = 0.5;
                     ctx.stroke();
                 }
             }
         } else {
-            stateDisplay.textContent = "GEOMETRY MASK: SEEKING DATA...";
+            stateDisplay.textContent = "GEOMETRY MASK: SEARCHING BIOMETRICS...";
         }
 
-        // --- 3D SOLID HAND SHELL SHADER ---
+        // --- 3D SOLID SHADED HANDS ---
         if (handResult.landmarks && handResult.landmarks.length > 0) {
             handResult.landmarks.forEach(hand => {
-                ctx.fillStyle = "rgba(0, 210, 255, 0.22)"; 
+                ctx.fillStyle = "rgba(0, 180, 255, 0.25)"; 
                 ctx.beginPath();
                 HAND_TRIANGLES.forEach(([idxA, idxB, idxC]) => {
                     const pA = hand[idxA];
@@ -231,8 +236,8 @@ function renderLoop() {
                 });
                 ctx.fill();
 
-                ctx.strokeStyle = "#00ccff";
-                ctx.lineWidth = 1.6;
+                ctx.strokeStyle = "#00bbff";
+                ctx.lineWidth = 1.5;
                 ctx.beginPath();
                 HAND_TRIANGLES.forEach(([idxA, idxB, idxC]) => {
                     const pA = hand[idxA];
@@ -252,7 +257,7 @@ function renderLoop() {
     frameCount++;
     const now = performance.now();
     if (now >= lastFpsUpdate + 1000) {
-        fpsDisplay.textContent = `FPS: ${Math.round((frameCount * 1000) / (now - lastFpsUpdate))} [3D MATRIX DELAY LOCK]`;
+        fpsDisplay.textContent = `FPS: ${Math.round((frameCount * 1000) / (now - lastFpsUpdate))}`;
         frameCount = 0;
         lastFpsUpdate = now;
     }
