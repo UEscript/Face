@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Front-Facing Unified Matrix Rig</title>
+    <title>High-Density Unified Matrix</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
@@ -28,13 +28,8 @@
 
 <div id="app">
     <div id="telemetry">
-        <div>SYSTEM: FRONT MASK GEOMETRY Engine</div>
+        <div>SYSTEM: DENSE GEOMETRY MATRIX</div>
         <div id="fps">FPS: --</div>
-        <hr style="border: 0; border-top: 1px solid rgba(0,255,255,0.2); margin: 8px 0;">
-        <div id="features-list">
-            FACE MASK: <span style="color:#00ffff">LOCKED</span><br>
-            HANDS: <span style="color:#00ffff">TRACKING</span>
-        </div>
     </div>
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
@@ -50,17 +45,29 @@ let frameCount = 0;
 let lastFpsUpdate = performance.now();
 window.latestHandResults = null;
 
+// Base skeletal links
 const HAND_LINKS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[9,10],[10,11],[11,12],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
+
+// Cross-finger knuckles connections to generate high-density webbing (matches the face mesh density)
+const HAND_KNUCKLE_WEBS = [
+    [1, 5], [2, 6], [3, 7], [4, 8],      // Thumb to Index web lines
+    [5, 9], [6, 10], [7, 11], [8, 12],    // Index to Middle web lines
+    [9, 13], [10, 14], [11, 15], [12, 16],// Middle to Ring web lines
+    [13, 17], [14, 18], [15, 19], [16, 20]// Ring to Pinky web lines
+];
+
+// Palm structure grid links
+const PALM_CROSS_LINKS = [[1, 17], [2, 13], [3, 9], [4, 5], [0, 9], [0, 13]];
 
 navigator.mediaDevices.getUserMedia({
     video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }
 }).then(stream => {
     video.srcObject = stream;
     video.play();
-    initializeFrontRig();
+    initializeStableRig();
 });
 
-function initializeFrontRig() {
+function initializeStableRig() {
     const faceMesh = new FaceMesh({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
@@ -68,8 +75,8 @@ function initializeFrontRig() {
     faceMesh.setOptions({
         maxNumFaces: 1,
         refineLandmarks: true, 
-        minDetectionConfidence: 0.45,
-        minTrackingConfidence: 0.45
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
     });
 
     const hands = new Hands({
@@ -79,12 +86,12 @@ function initializeFrontRig() {
     hands.setOptions({
         maxNumHands: 2,
         modelComplexity: 1,
-        minDetectionConfidence: 0.45,
-        minTrackingConfidence: 0.45
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
     });
 
     faceMesh.onResults((results) => {
-        renderFrontMatrix(results);
+        renderStableMatrix(results);
     });
 
     hands.onResults((results) => {
@@ -102,7 +109,18 @@ function initializeFrontRig() {
     camera.start();
 }
 
-function renderFrontMatrix(faceResults) {
+function drawMeshConnections(points, connections, w, h) {
+    for (const connection of connections) {
+        const fromPt = points[connection[0]];
+        const toPt = points[connection[1]];
+        if (fromPt && toPt) {
+            ctx.moveTo(fromPt.x * w, fromPt.y * h);
+            ctx.lineTo(toPt.x * w, toPt.y * h);
+        }
+    }
+}
+
+function renderStableMatrix(faceResults) {
     const w = canvas.width;
     const h = canvas.height;
     
@@ -111,25 +129,18 @@ function renderFrontMatrix(faceResults) {
     ctx.translate(w, 0);
     ctx.scale(-1, 1);
 
-    // --- FRONT FACE MASK RENDER ---
+    // --- FACE MASK SYSTEM ---
     if (faceResults.multiFaceLandmarks && faceResults.multiFaceLandmarks.length > 0) {
         const landmarks = faceResults.multiFaceLandmarks[0];
 
-        // Background Mesh Lines (Subtle cyan overlay glow)
+        // Background Mesh Lines
         ctx.strokeStyle = "rgba(0, 255, 255, 0.18)";
         ctx.lineWidth = 0.8;
         ctx.beginPath();
-        for (const connection of FACEMESH_TESSELATION) {
-            const fromPt = landmarks[connection[0]];
-            const toPt = landmarks[connection[1]];
-            if (fromPt && toPt) {
-                ctx.moveTo(fromPt.x * w, fromPt.y * h);
-                ctx.lineTo(toPt.x * w, toPt.y * h);
-            }
-        }
+        drawMeshConnections(landmarks, FACEMESH_TESSELATION, w, h);
         ctx.stroke();
 
-        // Main Accent Feature Rings
+        // Structural Feature Rings
         const structuralFeatures = [
             { path: FACEMESH_RIGHT_EYE, color: "#00ffff", width: 1.8 },
             { path: FACEMESH_LEFT_EYE, color: "#00ffff", width: 1.8 },
@@ -142,18 +153,11 @@ function renderFrontMatrix(faceResults) {
             ctx.strokeStyle = feature.color;
             ctx.lineWidth = feature.width;
             ctx.beginPath();
-            for (const connection of feature.path) {
-                const fromPt = landmarks[connection[0]];
-                const toPt = landmarks[connection[1]];
-                if (fromPt && toPt) {
-                    ctx.moveTo(fromPt.x * w, fromPt.y * h);
-                    ctx.lineTo(toPt.x * w, toPt.y * h);
-                }
-            }
+            drawMeshConnections(landmarks, feature.path, w, h);
             ctx.stroke();
         });
 
-        // Stretch-Responsive Junction Nodes
+        // Fast Tracking Nodes
         ctx.fillStyle = "#33ffff";
         for (let i = 0; i < landmarks.length; i++) {
             const pt = landmarks[i];
@@ -163,30 +167,27 @@ function renderFrontMatrix(faceResults) {
         }
     }
 
-    // --- CYAN MATCHING HAND TRACKING ---
+    // --- HIGH-DENSITY HAND WEBBING MATRIX ---
     const activeHands = window.latestHandResults;
     if (activeHands && activeHands.multiHandLandmarks) {
         activeHands.multiHandLandmarks.forEach(handLandmarks => {
             
-            // Hand structural bone connections
-            ctx.strokeStyle = "rgba(0, 255, 255, 0.25)";
-            ctx.lineWidth = 1.0;
+            // Draw all base links, finger webs, and cross palm lines together for high density
+            ctx.strokeStyle = "rgba(0, 255, 255, 0.22)";
+            ctx.lineWidth = 0.8;
             ctx.beginPath();
-            for (const connection of HAND_LINKS) {
-                const from = handLandmarks[connection[0]];
-                const to = handLandmarks[connection[1]];
-                if (from && to) {
-                    ctx.moveTo(from.x * w, from.y * h);
-                    ctx.lineTo(to.x * w, to.y * h);
-                }
-            }
+            
+            drawMeshConnections(handLandmarks, HAND_LINKS, w, h);
+            drawMeshConnections(handLandmarks, HAND_KNUCKLE_WEBS, w, h);
+            drawMeshConnections(handLandmarks, PALM_CROSS_LINKS, w, h);
+            
             ctx.stroke();
 
-            // Hand joint dots
+            // Hand Junction Dots
             ctx.fillStyle = "#33ffff";
             for (const pt of handLandmarks) {
                 ctx.beginPath();
-                ctx.arc(pt.x * w, pt.y * h, 1.6, 0, 2 * Math.PI);
+                ctx.arc(pt.x * w, pt.y * h, 1.5, 0, 2 * Math.PI);
                 ctx.fill();
             }
         });
@@ -194,7 +195,7 @@ function renderFrontMatrix(faceResults) {
 
     ctx.restore();
 
-    // FPS Loop Update
+    // FPS Counter Update
     frameCount++;
     const now = performance.now();
     if (now >= lastFpsUpdate + 1000) {
