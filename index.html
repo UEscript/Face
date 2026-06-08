@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Advanced Angular Mesh Vector Tracker</title>
+    <title>High-Performance Angular Mesh Tracker</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { 
@@ -11,7 +11,7 @@
             height: 100%; 
             overflow: hidden; 
             background: #050508; 
-            font-family: monospace;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
         }
         #app { 
             position: relative; 
@@ -25,7 +25,6 @@
             object-fit: cover; 
             z-index: 1; 
             transform: scaleX(-1);
-            opacity: 0.75;
         }
         canvas { 
             position: absolute; 
@@ -42,15 +41,15 @@
             top: 20px; 
             left: 20px; 
             z-index: 10; 
-            padding: 14px 18px; 
-            background: rgba(5, 5, 8, 0.9); 
-            border: 1px solid rgba(0, 255, 204, 0.3); 
-            border-radius: 6px; 
-            font-size: 11px; 
-            color: #00ffcc;
+            padding: 12px 16px; 
+            background: rgba(5, 5, 8, 0.85); 
+            border: 1px solid rgba(0, 255, 136, 0.3); 
+            border-radius: 8px; 
+            font-size: 12px; 
+            color: #00ff88;
             backdrop-filter: blur(10px); 
-            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
-            line-height: 1.7;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            font-family: monospace;
         }
     </style>
 </head>
@@ -58,255 +57,231 @@
 
 <div id="app">
     <div id="telemetry">
-        <div>CORE: VECTOR MESH MATRIX ENGINE</div>
-        <div id="fps-counter">PERF TRACKER: CALIBRATING...</div>
-        <div>PROFILE ENGINE: 3D RE-PROJECTION ACTIVE</div>
+        <div>ENGINE: REAL-TIME GEOMETRIC WIREFRAME</div>
+        <div id="fps">FPS: --</div>
     </div>
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
 </div>
 
-<script>
+<script type="module">
+import { FilesetResolver, FaceLandmarker, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
-const fpsCounter = document.getElementById("fps-counter");
+const fpsDisplay = document.getElementById("fps");
 
-let lastTime = performance.now();
-let frames = 0;
+let faceLandmarker;
+let handLandmarker;
+let lastVideoTime = -1;
+let frameCount = 0;
+let lastFpsUpdate = performance.now();
 
-// High-speed tracking geometry state registers
-const state = {
-    centerX: 0.5, centerY: 0.5,
-    yaw: 0.0, pitch: 0.0, roll: 0.0,
-    faceWidth: 0.22, faceHeight: 0.30,
-    leftHandX: 0.25, leftHandY: 0.75,
-    rightHandX: 0.75, rightHandY: 0.75,
-    isTracking: false
+// Grouping indices together to create angular mesh boundaries on the face
+const MESH_LINES = {
+    outline: [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10],
+    leftEye: [33, 160, 158, 133, 153, 144, 33],
+    rightEye: [362, 385, 387, 263, 373, 380, 362],
+    leftBrow: [70, 63, 105, 66, 107, 55],
+    rightBrow: [300, 293, 334, 296, 336, 285],
+    noseRidge: [6, 197, 195, 5],
+    noseBase: [102, 64, 2, 294, 331],
+    outerLips: [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84, 181, 91, 146, 61],
+    innerLips: [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95, 78]
 };
 
-// Smooth state interpolators
-const smooth = { ...state };
+// Connections to link face structure down to neck anchors
+const NECK_CONNECTIONS = [
+    { from: 152, to: 148 }, // Chin to lower left throat
+    { from: 152, to: 377 }, // Chin to lower right throat
+    { from: 234, to: 58 },   // Left cheek to jaw hinge
+    { from: 454, to: 288 }  // Right cheek to jaw hinge
+];
 
-// Hidden frame optimization buffer for raw pixel access
-const procCanvas = document.createElement("canvas");
-const pCtx = procCanvas.getContext("2d", { willReadFrequently: true });
+// Structural bone mapping for hands
+const HAND_CONNECTIONS = [
+    [0,1], [1,2], [2,3], [3,4],       // Thumb
+    [0,5], [5,6], [6,7], [7,8],       // Index
+    [9,10], [10,11], [11,12],         // Middle
+    [13,14], [14,15], [15,16],        // Ring
+    [0,17], [17,18], [18,19], [19,20], // Pinky
+    [5,9], [9,13], [13,17]             // Palm Frame
+];
 
-async function initEngine() {
+async function initializeTracking() {
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { 
-                facingMode: "user", 
-                width: { ideal: 1280 }, 
-                height: { ideal: 720 },
-                frameRate: { ideal: 60 } // Pull maximum supported native camera frames
-            }
+        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+        
+        faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+            baseOptions: { 
+                modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
+                delegate: "GPU"
+            },
+            runningMode: "VIDEO",
+            numFaces: 1
         });
+
+        handLandmarker = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: { 
+                modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+                delegate: "GPU"
+            },
+            runningMode: "VIDEO",
+            numHands: 2
+        });
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } }
+        });
+        
         video.srcObject = stream;
         video.onloadedmetadata = () => {
             video.play();
-            canvas.width = procCanvas.width = video.videoWidth;
-            canvas.height = procCanvas.height = video.videoHeight;
-            requestAnimationFrame(engineMainLoop);
+            requestAnimationFrame(processingLoop);
         };
     } catch (err) {
-        document.getElementById("telemetry").textContent = "CRITICAL ENGINE OVERLOAD: CAMERA BLOCKED";
+        console.error("Initialization failed: ", err);
     }
 }
 
-// Custom 3D Angular Re-projection Processor
-function computeVectorMesh() {
-    pCtx.drawImage(video, 0, 0, procCanvas.width, procCanvas.height);
-    const src = pCtx.getImageData(0, 0, procCanvas.width, procCanvas.height);
-    const pixels = src.data;
-    const w = procCanvas.width;
-    const h = procCanvas.height;
-
-    let accumX = 0, accumY = 0, sampleCount = 0;
-    let minX = w, maxX = 0, minY = h, maxY = 0;
-
-    // Fast unified frame scan loop
-    for (let y = 40; y < h - 40; y += 12) {
-        for (let x = 40; x < w - 40; x += 12) {
-            const idx = (y * w + x) * 4;
-            // Native quick luminance evaluation formula
-            const luma = pixels[idx] * 0.299 + pixels[idx+1] * 0.587 + pixels[idx+2] * 0.114;
-
-            if (luma > 165) { 
-                accumX += x;
-                accumY += y;
-                sampleCount++;
-
-                if (x < minX) minX = x;
-                if (x > maxX) maxX = x;
-                if (y < minY) minY = y;
-                if (y > maxY) maxY = y;
-            }
-        }
-    }
-
-    if (sampleCount > 8) {
-        state.isTracking = true;
-        state.centerX = (accumX / sampleCount) / w;
-        state.centerY = (accumY / sampleCount) / h;
-        
-        const currentWidth = (maxX - minX) / w;
-        const currentHeight = (maxY - minY) / h;
-        state.faceWidth = currentWidth * 0.45;
-        state.faceHeight = currentHeight * 0.55;
-
-        // Side Profile Protection Matrix Mathematics
-        // Calculates structural asymmetries to extract 3D head rotation angles
-        const centerSpanX = state.centerX - ((minX + (maxX - minX) / 2) / w);
-        state.yaw = centerSpanX * 4.5; // Yaw angle maps your side profile rotation
-        state.pitch = (state.centerY - 0.45) * 1.5;
-
-        // Track hands based on structural contrast offsets outside the face bounding box
-        state.leftHandX = state.centerX - (state.faceWidth * 1.8) - (state.yaw * 0.1);
-        state.leftHandY = state.centerY + 0.3 + (state.pitch * 0.2);
-
-        state.rightHandX = state.centerX + (state.faceWidth * 1.8) - (state.yaw * 0.1);
-        state.rightHandY = state.centerY + 0.3 + (state.pitch * 0.2);
-    } else {
-        state.isTracking = false;
-    }
-}
-
-// Vector Line Connection Linker
-function renderVectorWire(ptA, ptB, color = "rgba(0, 255, 204, 0.85)", width = 1.5) {
+function drawWireframePath(points, indices, color, width = 2) {
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
     ctx.beginPath();
-    ctx.moveTo(ptA.x, ptA.y);
-    ctx.lineTo(ptB.x, ptB.y);
+    
+    let first = true;
+    for (const idx of indices) {
+        const pt = points[idx];
+        if (!pt) continue;
+        
+        const x = pt.x * canvas.width;
+        const y = pt.y * canvas.height;
+        
+        if (first) {
+            ctx.moveTo(x, y);
+            first = false;
+        } else {
+            ctx.lineTo(x, y);
+        }
+    }
     ctx.stroke();
 }
 
-function renderMeshHUD() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    const w = canvas.width;
-    const h = canvas.height;
-    
-    // Smooth lerp weight (Lower value = more stable, Higher value = faster tracking response)
-    const lerpWeight = 0.35; 
+function processingLoop() {
+    if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+    }
 
-    for (const key in state) {
-        if (typeof state[key] === "number") {
-            smooth[key] += (state[key] - smooth[key]) * lerpWeight;
-        } else {
-            smooth[key] = state[key];
+    const timestamp = performance.now();
+
+    if (video.currentTime !== lastVideoTime) {
+        lastVideoTime = video.currentTime;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Mirror canvas globally to sync with mirrored video feed layout
+        ctx.save();
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+
+        // Live hardware inference execution
+        const faceResult = faceLandmarker.detectForVideo(video, timestamp);
+        const handResult = handLandmarker.detectForVideo(video, timestamp);
+
+        const w = canvas.width;
+        const h = canvas.height;
+
+        // Render Angular Face Mesh
+        if (faceResult.faceLandmarks && faceResult.faceLandmarks.length > 0) {
+            const face = faceResult.faceLandmarks[0];
+
+            // Render structural facet maps
+            drawWireframePath(face, MESH_LINES.outline, "#00ffcc", 2.5);
+            drawWireframePath(face, MESH_LINES.leftEye, "#ff3366", 1.5);
+            drawWireframePath(face, MESH_LINES.rightEye, "#ff3366", 1.5);
+            drawWireframePath(face, MESH_LINES.leftBrow, "#00ffcc", 2);
+            drawWireframePath(face, MESH_LINES.rightBrow, "#00ffcc", 2);
+            drawWireframePath(face, MESH_LINES.noseRidge, "#00ffcc", 2);
+            drawWireframePath(face, MESH_LINES.noseBase, "#00ffcc", 2);
+            drawWireframePath(face, MESH_LINES.outerLips, "#ff3366", 2);
+            drawWireframePath(face, MESH_LINES.innerLips, "#ff3366", 1.5);
+
+            // Dynamic Cross-Facet Lines (Creates the angular planes on the face)
+            ctx.strokeStyle = "rgba(0, 255, 204, 0.25)";
+            ctx.lineWidth = 1;
+            
+            // Connect eyebrows to nose bridge
+            ctx.beginPath();
+            ctx.moveTo(face[55].x * w, face[55].y * h); ctx.lineTo(face[6].x * w, face[6].y * h);
+            ctx.lineTo(face[285].x * w, face[285].y * h);
+            
+            // Connect eyes to cheeks to nose
+            ctx.moveTo(face[133].x * w, face[133].y * h); ctx.lineTo(face[234].x * w, face[234].y * h); ctx.lineTo(face[2].x * w, face[2].y * h);
+            ctx.moveTo(face[362].x * w, face[362].y * h); ctx.lineTo(face[454].x * w, face[454].y * h); ctx.lineTo(face[2].x * w, face[2].y * h);
+            ctx.stroke();
+
+            // Render Neck Rigging Coupling
+            ctx.strokeStyle = "rgba(0, 162, 255, 0.6)";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            NECK_CONNECTIONS.forEach(edge => {
+                const p1 = face[edge.from];
+                const p2 = face[edge.to];
+                if (p1 && p2) {
+                    ctx.moveTo(p1.x * w, p1.y * h);
+                    ctx.lineTo(p2.x * w, p2.y * h);
+                }
+            });
+            ctx.stroke();
         }
+
+        // Render Hand Wireframes
+        if (handResult.landmarks && handResult.landmarks.length > 0) {
+            handResult.landmarks.forEach(hand => {
+                ctx.strokeStyle = "#ffcc00";
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                
+                HAND_CONNECTIONS.forEach(([start, end]) => {
+                    const p1 = hand[start];
+                    const p2 = hand[end];
+                    if (p1 && p2) {
+                        ctx.moveTo(p1.x * w, p1.y * h);
+                        ctx.lineTo(p2.x * w, p2.y * h);
+                    }
+                });
+                ctx.stroke();
+
+                // Cross-connect knuckles to show hand surface angles
+                ctx.strokeStyle = "rgba(255, 204, 0, 0.3)";
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(hand[5].x * w, hand[5].y * h);
+                for(let k = 9; k <= 17; k += 4) {
+                    ctx.lineTo(hand[k].x * w, hand[k].y * h);
+                }
+                ctx.stroke();
+            });
+        }
+
+        ctx.restore();
     }
 
-    // Mirror translation transformation inversion
-    const cX = w - (smooth.centerX * w);
-    const cY = smooth.centerY * h;
-    const fW = smooth.faceWidth * w;
-    const fH = smooth.faceHeight * h;
-    const profileShift = smooth.yaw * w * 0.25;
-
-    if (!smooth.isTracking) return;
-
-    // Calculate structural 3D face nodes using precise geometric offsets
-    const nodes = {
-        hairline:   { x: cX + profileShift,         y: cY - fH * 0.8 },
-        foreheadL:  { x: cX - fW * 0.4 + profileShift, y: cY - fH * 0.6 },
-        foreheadR:  { x: cX + fW * 0.4 + profileShift, y: cY - fH * 0.6 },
-        browL:      { x: cX - fW * 0.5 + profileShift, y: cY - fH * 0.3 },
-        browR:      { x: cX + fW * 0.5 + profileShift, y: cY - fH * 0.3 },
-        eyeL:       { x: cX - fW * 0.35 + profileShift,y: cY - fH * 0.1 },
-        eyeR:       { x: cX + fW * 0.35 + profileShift,y: cY - fH * 0.1 },
-        noseBridge: { x: cX + profileShift,         y: cY - fH * 0.1 },
-        noseTip:    { x: cX + profileShift * 1.3,   y: cY + fH * 0.1 },
-        cheekL:     { x: cX - fW * 0.75 + profileShift,y: cY + fH * 0.15 },
-        cheekR:     { x: cX + fW * 0.75 + profileShift,y: cY + fH * 0.15 },
-        upperLip:   { x: cX + profileShift * 1.1,   y: cY + fH * 0.35 },
-        lowerLip:   { x: cX + profileShift * 1.1,   y: cY + fH * 0.48 },
-        mouthL:     { x: cX - fW * 0.25 + profileShift,y: cY + fH * 0.42 },
-        mouthR:     { x: cX + fW * 0.25 + profileShift,y: cY + fH * 0.42 },
-        jawL:       { x: cX - fW * 0.6 + profileShift, y: cY + fH * 0.65 },
-        jawR:       { x: cX + fW * 0.6 + profileShift, y: cY + fH * 0.65 },
-        chinBase:   { x: cX + profileShift,         y: cY + fH * 0.85 },
-        neckBaseL:  { x: cX - fW * 0.4,              y: cY + fH * 1.2 },
-        neckBaseR:  { x: cX + fW * 0.4,              y: cY + fH * 1.2 }
-    };
-
-    // --- RENDER FACE PLAIN-ANGLES MESH WIREFRAME ---
-    // Outer Frame Contour Paths
-    renderVectorWire(nodes.hairline, nodes.foreheadL); renderVectorWire(nodes.hairline, nodes.foreheadR);
-    renderVectorWire(nodes.foreheadL, nodes.browL); renderVectorWire(nodes.foreheadR, nodes.browR);
-    renderVectorWire(nodes.browL, nodes.cheekL); renderVectorWire(nodes.browR, nodes.cheekR);
-    renderVectorWire(nodes.cheekL, nodes.jawL); renderVectorWire(nodes.cheekR, nodes.jawR);
-    renderVectorWire(nodes.jawL, nodes.chinBase); renderVectorWire(nodes.jawR, nodes.chinBase);
-
-    // Inner Structural Feature Diamond Lines
-    renderVectorWire(nodes.hairline, nodes.noseBridge);
-    renderVectorWire(nodes.browL, nodes.noseBridge); renderVectorWire(nodes.browR, nodes.noseBridge);
-    renderVectorWire(nodes.noseBridge, nodes.noseTip);
-    renderVectorWire(nodes.eyeL, nodes.noseTip); renderVectorWire(nodes.eyeR, nodes.noseTip);
-    renderVectorWire(nodes.cheekL, nodes.noseTip); renderVectorWire(nodes.cheekR, nodes.noseTip);
-
-    // Mouth / Lips Complex Mesh Angles
-    renderVectorWire(nodes.noseTip, nodes.upperLip);
-    renderVectorWire(nodes.upperLip, nodes.mouthL); renderVectorWire(nodes.upperLip, nodes.mouthR);
-    renderVectorWire(nodes.lowerLip, nodes.mouthL); renderVectorWire(nodes.lowerLip, nodes.mouthR);
-    renderVectorWire(nodes.mouthL, nodes.jawL); renderVectorWire(nodes.mouthR, nodes.jawR);
-    renderVectorWire(nodes.lowerLip, nodes.chinBase);
-
-    // Neck Structural Rigging Coupling Lines
-    renderVectorWire(nodes.jawL, nodes.neckBaseL, "rgba(0, 162, 255, 0.6)", 2);
-    renderVectorWire(nodes.jawR, nodes.neckBaseR, "rgba(0, 162, 255, 0.6)", 2);
-    renderVectorWire(nodes.chinBase, { x: cX, y: nodes.neckBaseL.y }, "rgba(0, 162, 255, 0.4)", 1.5);
-
-    // --- RENDER SMOOTH HAND SKELETON WIREFRAME WRISTS ---
-    const buildHandMesh = (hX, hY, prefix) => {
-        const hBaseX = w - (hX * w);
-        const hBaseY = hY * h;
-        
-        const joints = {
-            wrist:  { x: hBaseX,           y: hBaseY },
-            thumb:  { x: hBaseX - fW * 0.3, y: hBaseY - fH * 0.2 },
-            index:  { x: hBaseX - fW * 0.1, y: hBaseY - fH * 0.45 },
-            middle: { x: hBaseX + fW * 0.1, y: hBaseY - fH * 0.5 },
-            ring:   { x: hBaseX + fW * 0.25,y: hBaseY - fH * 0.45 },
-            pinky:  { x: hBaseX + fW * 0.4, y: hBaseY - fH * 0.35 }
-        };
-
-        // Render joint structural loops
-        renderVectorWire(joints.wrist, joints.thumb, "#ffcc00", 2.5);
-        renderVectorWire(joints.wrist, joints.index, "#ffcc00", 2.5);
-        renderVectorWire(joints.wrist, joints.middle, "#ffcc00", 2.5);
-        renderVectorWire(joints.wrist, joints.ring, "#ffcc00", 2.5);
-        renderVectorWire(joints.wrist, joints.pinky, "#ffcc00", 2.5);
-        renderVectorWire(joints.thumb, joints.index, "rgba(255, 204, 0, 0.4)", 1.5);
-        renderVectorWire(joints.index, joints.middle, "rgba(255, 204, 0, 0.4)", 1.5);
-        renderVectorWire(joints.middle, joints.ring, "rgba(255, 204, 0, 0.4)", 1.5);
-        renderVectorWire(joints.ring, joints.pinky, "rgba(255, 204, 0, 0.4)", 1.5);
-    };
-
-    buildHandMesh(smooth.leftHandX, smooth.leftHandY, "L");
-    buildHandMesh(smooth.rightHandX, smooth.rightHandY, "R");
-}
-
-function engineMainLoop() {
-    computeVectorMesh();
-    renderMeshHUD();
-
-    // High refresh-rate hardware counter analysis
-    frames++;
+    // Performance FPS metrics calculation
+    frameCount++;
     const now = performance.now();
-    if (now >= lastTime + 1000) {
-        const curFPS = Math.round((frames * 1000) / (now - lastTime));
-        fpsCounter.textContent = `PERF TRACKER: ${curFPS} FPS [MAX SPEED]`;
-        frames = 0;
-        lastTime = now;
+    if (now >= lastFpsUpdate + 1000) {
+        const currentFps = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
+        fpsDisplay.textContent = `FPS: ${currentFps} [GPU ACCELERATED]`;
+        frameCount = 0;
+        lastFpsUpdate = now;
     }
 
-    requestAnimationFrame(engineMainLoop);
+    requestAnimationFrame(processingLoop);
 }
 
-initEngine();
+initializeTracking();
 </script>
 </body>
 </html>
