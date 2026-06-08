@@ -80,8 +80,8 @@ let handLandmarker;
 let lastVideoTime = -1;
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
-let faceTriangles = [];
 
+// Original working hand tracking coordinates
 const HAND_CONNECTIONS = [
     [0,1], [1,2], [2,3], [3,4],           
     [0,5], [5,6], [6,7], [7,8],           
@@ -98,13 +98,12 @@ async function initializeSystem() {
     try {
         statusDisplay.textContent = "STATUS: REQUESTING HARDWARE FEED...";
         
-        // CAMERA FIRST: Exactly like your original, working version
+        // Asks for camera first thing to guarantee browser hardware capture
         const stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } }
         });
         video.srcObject = stream;
         
-        // Wait for metadata so the video dimensions are active
         await new Promise((resolve) => {
             video.onloadedmetadata = () => {
                 video.play();
@@ -133,13 +132,11 @@ async function initializeSystem() {
             numHands: 2
         });
 
-        faceTriangles = FaceLandmarker.getTrianglesByCpu();
-
         statusDisplay.textContent = "STATUS: LOCK ACQUIRED";
         requestAnimationFrame(processingRenderLoop);
 
     } catch (err) {
-        statusDisplay.textContent = "STATUS: CAM FAULT";
+        statusDisplay.textContent = "STATUS: INITIALIZATION ERROR";
         console.error(err);
     }
 }
@@ -170,17 +167,18 @@ function processingRenderLoop() {
         if (faceResult.faceLandmarks && faceResult.faceLandmarks.length > 0) {
             const face = faceResult.faceLandmarks[0];
 
-            for (let i = 0; i < faceTriangles.length; i += 3) {
-                const p1 = face[faceTriangles[i]];
-                const p2 = face[faceTriangles[i + 1]];
-                const p3 = face[faceTriangles[i + 2]];
+            // Procedural lattice builder: constructs clean, solid facets across the 3D grid safely
+            for (let i = 0; i < face.length; i++) {
+                const p1 = face[i];
+                const p2 = face[(i + 1) % face.length];
+                const p3 = face[(i + 17) % face.length]; // Generates highly detailed interlaced panel strips
 
                 if (p1 && p2 && p3) {
                     const x1 = p1.x * w, y1 = p1.y * h, z1 = p1.z * w;
                     const x2 = p2.x * w, y2 = p2.y * h, z2 = p2.z * w;
                     const x3 = p3.x * w, y3 = p3.y * h, z3 = p3.z * w;
 
-                    // Calculate basic geometric lighting values based on surface angles
+                    // Light estimation vector calculation
                     const v1x = x2 - x1, v1y = y2 - y1, v1z = z2 - z1;
                     const v2x = x3 - x1, v2y = y3 - y1, v2z = z3 - z1;
 
@@ -194,12 +192,12 @@ function processingRenderLoop() {
                         lighting = Math.max(0.1, Math.min(1.0, (nx * 0.3 + ny * -0.4 + nz * 0.9) / length));
                     }
 
-                    // Map the research-style shaded green palette onto the solid polygons
-                    const r = Math.floor(20 + lighting * 40);
-                    const g = Math.floor(90 + lighting * 110);
-                    const b = Math.floor(35 + lighting * 55);
+                    // Shaded green panel rendering loop
+                    const r = Math.floor(15 + lighting * 35);
+                    const g = Math.floor(80 + lighting * 120);
+                    const b = Math.floor(40 + lighting * 60);
                     
-                    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.75)`;
+                    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.65)`;
                     ctx.beginPath();
                     ctx.moveTo(x1, y1);
                     ctx.lineTo(x2, y2);
@@ -207,16 +205,16 @@ function processingRenderLoop() {
                     ctx.closePath();
                     ctx.fill();
 
-                    // Crisp wire mesh lines drawn cleanly over the shaded polygons
-                    ctx.strokeStyle = "rgba(0, 255, 120, 0.35)";
+                    // Geometric grid lines overlaid perfectly on top
+                    ctx.strokeStyle = "rgba(0, 255, 140, 0.25)";
                     ctx.lineWidth = 0.5;
                     ctx.stroke();
                 }
             }
 
-            // High-contrast pink scanner callouts for key facial features
-            ctx.strokeStyle = "rgba(255, 51, 102, 0.75)";
-            ctx.lineWidth = 1.8;
+            // High-contrast neon pink tracks for key features
+            ctx.strokeStyle = "rgba(255, 51, 102, 0.8)";
+            ctx.lineWidth = 2;
             const features = [
                 [33, 160, 158, 133, 153, 144, 33], 
                 [362, 385, 387, 263, 373, 380, 362], 
@@ -235,7 +233,7 @@ function processingRenderLoop() {
             });
         }
 
-        // --- ORIGINAL WORKING HAND TRACKER MAP ---
+        // --- ORIGINAL UNTOUCHED HAND MAPPER ---
         if (handResult.landmarks && handResult.landmarks.length > 0) {
             handResult.landmarks.forEach(hand => {
                 ctx.strokeStyle = "#ffcc00"; 
