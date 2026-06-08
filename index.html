@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Local 3D Matrix Mesh</title>
+    <title>High-Contrast Smoothed 3D Matrix</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
@@ -11,15 +11,15 @@
 
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body { width: 100%; height: 100%; overflow: hidden; background: #020204; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #000000; }
         #app { position: relative; width: 100vw; height: 100vh; }
         video { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 1; transform: scaleX(-1); }
         canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; z-index: 2; pointer-events: none; }
         #telemetry {
             position: absolute; top: 20px; left: 20px; z-index: 10;
-            padding: 12px 16px; background: rgba(5, 5, 10, 0.85);
-            border: 1px solid rgba(0, 245, 212, 0.3); border-radius: 8px;
-            font-size: 11px; color: #00f5d4; font-family: monospace;
+            padding: 12px 16px; background: rgba(0, 0, 0, 0.85);
+            border: 1px solid #00ffff; border-radius: 8px;
+            font-size: 11px; color: #00ffff; font-family: monospace;
             line-height: 1.6; letter-spacing: 0.5px; backdrop-filter: blur(10px);
         }
     </style>
@@ -28,9 +28,8 @@
 
 <div id="app">
     <div id="telemetry">
-        <div>SYSTEM: LOCAL GEOMETRIC MATRIX</div>
-        <div id="fps">FPS: -- [GPU DIRECT]</div>
-        <div id="status">STATUS: STARTING CAM...</div>
+        <div>SYSTEM: SMOOTHED HIGH-CONTRAST MATRIX</div>
+        <div id="fps">FPS: --</div>
     </div>
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
@@ -41,22 +40,25 @@ const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const fpsDisplay = document.getElementById("fps");
-const statusDisplay = document.getElementById("status");
 
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
 window.latestHandResults = null;
 
-// High-tech skeletal blueprints mapped out directly for mobile compatibility
+// Tracking history caches for exponential smoothing interpolation
+let smoothedFaceLandmarks = [];
+let smoothedHandLandmarks = [];
+const SMOOTHING_FACTOR = 0.45; // Lower = smoother tracking, Higher = faster tracking response
+
 const FACE_CONTOURS = [
-    [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10], // Face Outer Edge
+    [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10], // Face Perimeter
     [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246, 33], // Left Eye Loop
     [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398, 362], // Right Eye Loop
-    [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185, 61], // Lips Outer Perimeter
-    [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 418, 312, 311, 310, 13, 80, 81, 82, 96, 78],  // Lips Inner Perimeter
+    [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185, 61], // Outer Lips
+    [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 418, 312, 311, 310, 13, 80, 81, 82, 96, 78],  // Inner Lips
     [70, 63, 105, 66, 107, 55, 65, 52, 53, 46], // Left Eyebrow
     [336, 296, 334, 293, 300, 276, 283, 282, 295, 285], // Right Eyebrow
-    [168, 6, 197, 195, 5, 4, 1, 19, 94, 2] // Nose Ridge Path
+    [168, 6, 197, 195, 5, 4, 1, 19, 94, 2] // Nose Ridge
 ];
 
 const HAND_CONNECTIONS = [
@@ -68,29 +70,23 @@ const HAND_CONNECTIONS = [
     [5,9], [9,13], [13,17]
 ];
 
-// Instantly request the device camera
 navigator.mediaDevices.getUserMedia({
     video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }
 }).then(stream => {
     video.srcObject = stream;
     video.play();
     initializeTracking();
-}).catch(err => {
-    statusDisplay.textContent = "STATUS: CAMERA DENIED";
-    console.error(err);
 });
 
 function initializeTracking() {
-    statusDisplay.textContent = "STATUS: INJECTING ENGINE...";
-
     const faceMesh = new FaceMesh({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
     faceMesh.setOptions({
         maxNumFaces: 1,
         refineLandmarks: true,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
     });
 
     const hands = new Hands({
@@ -99,12 +95,11 @@ function initializeTracking() {
     hands.setOptions({
         maxNumHands: 2,
         modelComplexity: 1,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
     });
 
     faceMesh.onResults((results) => {
-        statusDisplay.textContent = "STATUS: TRACKING ACTIVE";
         renderMatrixFrame(results);
     });
     
@@ -120,8 +115,29 @@ function initializeTracking() {
             await hands.send({ image: video });
         }
     });
-    
     camera.start();
+}
+
+function updateSmoothedPoints(rawPoints, historicalPoints) {
+    if (!historicalPoints || historicalPoints.length !== rawPoints.length) {
+        return [...rawPoints];
+    }
+    return rawPoints.map((pt, i) => ({
+        x: historicalPoints[i].x + (pt.x - historicalPoints[i].x) * SMOOTHING_FACTOR,
+        y: historicalPoints[i].y + (pt.y - historicalPoints[i].y) * SMOOTHING_FACTOR
+    }));
+}
+
+function drawHighContrastNode(ctx, x, y, size, color) {
+    ctx.beginPath();
+    ctx.arc(x, y, size + 1.2, 0, 2 * Math.PI);
+    ctx.fillStyle = "#000000"; // Dark high-contrast outer ring
+    ctx.fill();
+    
+    ctx.beginPath();
+    ctx.arc(x, y, size, 0, 2 * Math.PI);
+    ctx.fillStyle = color; // Neon node center
+    ctx.fill();
 }
 
 function renderMatrixFrame(faceResults) {
@@ -129,39 +145,28 @@ function renderMatrixFrame(faceResults) {
     const h = canvas.height;
     
     ctx.clearRect(0, 0, w, h);
-    
     ctx.save();
     ctx.translate(w, 0);
     ctx.scale(-1, 1);
 
-    // --- FACE MESH ENGINE ---
+    // --- SMOOTHED FACE WIREFRAME ---
     if (faceResults.multiFaceLandmarks && faceResults.multiFaceLandmarks.length > 0) {
-        const landmarks = faceResults.multiFaceLandmarks[0];
+        const rawFace = faceResults.multiFaceLandmarks[0];
+        smoothedFaceLandmarks = updateSmoothedPoints(rawFace, smoothedFaceLandmarks);
 
-        // 1. Plot all face matrix nodes as clean tracking micro-dots
-        ctx.fillStyle = "rgba(0, 245, 212, 0.7)";
-        for (let i = 0; i < landmarks.length; i++) {
-            const pt = landmarks[i];
-            ctx.beginPath();
-            ctx.arc(pt.x * w, pt.y * h, 1.5, 0, 2 * Math.PI);
-            ctx.fill();
-        }
-
-        // 2. Connect structural tracking paths smoothly
+        // Connect structured paths first so lines render neatly underneath nodes
         FACE_CONTOURS.forEach((path, pathIdx) => {
-            // Path indices 1, 2, 3, 4 represent eyes and lips -> Style them Hot Pink
             if (pathIdx >= 1 && pathIdx <= 4) {
-                ctx.strokeStyle = "#ff007f";
-                ctx.lineWidth = 2.0;
+                ctx.strokeStyle = "#ff0055"; // Bright High-Contrast Crimson Lip/Eye rings
+                ctx.lineWidth = 2.5;
             } else {
-                // Outer bounds, nose, and brows -> Style them Neon Cyan
-                ctx.strokeStyle = "#00f5d4";
-                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = "#00ffff"; // High-Contrast Electric Cyan features
+                ctx.lineWidth = 1.8;
             }
 
             ctx.beginPath();
             path.forEach((idx, step) => {
-                const pt = landmarks[idx];
+                const pt = smoothedFaceLandmarks[idx];
                 if (pt) {
                     if (step === 0) ctx.moveTo(pt.x * w, pt.y * h);
                     else ctx.lineTo(pt.x * w, pt.y * h);
@@ -169,20 +174,40 @@ function renderMatrixFrame(faceResults) {
             });
             ctx.stroke();
         });
+
+        // Layer explicit dots on top of every single line path point
+        FACE_CONTOURS.forEach((path, pathIdx) => {
+            const nodeColor = (pathIdx >= 1 && pathIdx <= 4) ? "#ff3385" : "#33ffff";
+            const nodeSize = (pathIdx >= 1 && pathIdx <= 4) ? 3.0 : 2.2;
+            
+            path.forEach(idx => {
+                const pt = smoothedFaceLandmarks[idx];
+                if (pt) {
+                    drawHighContrastNode(ctx, pt.x * w, pt.y * h, nodeSize, nodeColor);
+                }
+            });
+        });
     }
 
-    // --- HAND RIG ENGINE ---
+    // --- SMOOTHED HAND SKELETON ---
     const activeHands = window.latestHandResults;
-    if (activeHands && activeHands.multiHandLandmarks) {
-        activeHands.multiHandLandmarks.forEach(handLandmarks => {
+    if (activeHands && activeHands.multiHandLandmarks && activeHands.multiHandLandmarks.length > 0) {
+        activeHands.multiHandLandmarks.forEach((rawHand, handIdx) => {
+            if (!smoothedHandLandmarks[handIdx]) {
+                smoothedHandLandmarks[handIdx] = [...rawHand];
+            } else {
+                smoothedHandLandmarks[handIdx] = updateSmoothedPoints(rawHand, smoothedHandLandmarks[handIdx]);
+            }
             
-            // 1. Draw hand skeletal bone lines
-            ctx.strokeStyle = "#ffcc00";
-            ctx.lineWidth = 2.2;
+            const hand = smoothedHandLandmarks[handIdx];
+
+            // Draw structural hand lines
+            ctx.strokeStyle = "#ffcc00"; // Deep Golden Rod High-Contrast lines
+            ctx.lineWidth = 2.5;
             ctx.beginPath();
             for (const connection of HAND_CONNECTIONS) {
-                const from = handLandmarks[connection[0]];
-                const to = handLandmarks[connection[1]];
+                const from = hand[connection[0]];
+                const to = hand[connection[1]];
                 if (from && to) {
                     ctx.moveTo(from.x * w, from.y * h);
                     ctx.lineTo(to.x * w, to.y * h);
@@ -190,24 +215,23 @@ function renderMatrixFrame(faceResults) {
             }
             ctx.stroke();
 
-            // 2. Overlay golden structural node dots
-            ctx.fillStyle = "#ffcc00";
-            for (const pt of handLandmarks) {
-                ctx.beginPath();
-                ctx.arc(pt.x * w, pt.y * h, 3, 0, 2 * Math.PI);
-                ctx.fill();
-            }
+            // Layer hand joint tracking dots
+            hand.forEach(pt => {
+                drawHighContrastNode(ctx, pt.x * w, pt.y * h, 3.5, "#ffee55");
+            });
         });
+    } else {
+        smoothedHandLandmarks = [];
     }
 
     ctx.restore();
 
-    // Hardware Telemetry Engine
+    // Telemetry Engine
     frameCount++;
     const now = performance.now();
     if (now >= lastFpsUpdate + 1000) {
         const currentFps = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
-        fpsDisplay.textContent = `FPS: ${currentFps} [GPU DIRECT]`;
+        fpsDisplay.textContent = `FPS: ${currentFps}`;
         frameCount = 0;
         lastFpsUpdate = now;
     }
