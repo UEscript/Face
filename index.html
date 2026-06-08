@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Dynamic Vector 3D Matrix</title>
+    <title>All-Angle Responsive Matrix</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
@@ -19,17 +19,25 @@
             padding: 12px 16px; background: rgba(0, 0, 0, 0.85);
             border: 1px solid #00ffff; border-radius: 8px;
             font-size: 11px; color: #00ffff; font-family: monospace;
-            line-height: 1.6; letter-spacing: 0.5px; backdrop-filter: blur(10px);
+            line-height: 1.5; letter-spacing: 0.5px; backdrop-filter: blur(10px);
         }
+        .lock-tag { color: #ff0055; font-weight: bold; }
     </style>
 </head>
 <body>
 
 <div id="app">
     <div id="telemetry">
-        <div>SYSTEM: MATRIX V2 (VECTOR ANGLE ENGINE)</div>
-        <div id="orientation">ANGLE: CALCULATING...</div>
+        <div>SYSTEM: ALL-ANGLE GEOMETRY ENGINE</div>
         <div id="fps">FPS: --</div>
+        <hr style="border: 0; border-top: 1px solid rgba(0,255,255,0.2); margin: 8px 0;">
+        <div id="track-dir">FACING: DETECTING...</div>
+        <div id="features-list">
+            CHIN: <span class="lock-tag">WAITING</span><br>
+            EYEBROWS: <span class="lock-tag">WAITING</span><br>
+            EYES: <span class="lock-tag">WAITING</span><br>
+            LIPS: <span class="lock-tag">WAITING</span>
+        </div>
     </div>
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
@@ -40,7 +48,8 @@ const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const fpsDisplay = document.getElementById("fps");
-const orientationDisplay = document.getElementById("orientation");
+const trackDirDisplay = document.getElementById("track-dir");
+const featuresDisplay = document.getElementById("features-list");
 
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
@@ -50,23 +59,23 @@ navigator.mediaDevices.getUserMedia({
 }).then(stream => {
     video.srcObject = stream;
     video.play();
-    initializeVectorEngine();
+    initializeAllAngleEngine();
 });
 
-function initializeVectorEngine() {
+function initializeAllAngleEngine() {
     const faceMesh = new FaceMesh({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
 
     faceMesh.setOptions({
         maxNumFaces: 1,
-        refineLandmarks: true, // Forces precise tracking along skin boundaries
+        refineLandmarks: true, 
         minDetectionConfidence: 0.4,
         minTrackingConfidence: 0.4
     });
 
     faceMesh.onResults((results) => {
-        renderVectorMatrix(results);
+        renderAllAngleMatrix(results);
     });
 
     const camera = new Camera(video, {
@@ -79,7 +88,7 @@ function initializeVectorEngine() {
     camera.start();
 }
 
-function renderVectorMatrix(results) {
+function renderAllAngleMatrix(results) {
     const w = canvas.width;
     const h = canvas.height;
     
@@ -91,54 +100,48 @@ function renderVectorMatrix(results) {
     if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
         const landmarks = results.multiFaceLandmarks[0];
 
-        // --- TRUE 3D VECTOR ORIENTATION CALCULATION ---
-        // We track the relative depth difference between the center tip of the nose (1)
-        // and the base structural jaw pivot points to get the true side rotation vector.
-        const nose = landmarks[1];
-        const leftCheek = landmarks[234];
-        const rightCheek = landmarks[454];
+        // --- ASPECT RATIO POSITION DETECTION ---
+        // Dynamically tracks orientation based on horizontal surface span ratios
+        const leftEdge = landmarks[234].x;
+        const rightEdge = landmarks[454].x;
+        const noseCenter = landmarks[1].x;
 
-        // Compute the directional vector bias
-        const midX = (leftCheek.x + rightCheek.x) / 2;
-        const rotationBias = nose.x - midX; 
+        const leftDist = Math.abs(noseCenter - leftEdge);
+        const rightDist = Math.abs(rightEdge - noseCenter);
+        const ratio = leftDist / rightDist;
 
-        let viewMode = "FRONT PROFILE";
-        let hideBackPoints = false;
-
-        if (rotationBias < -0.04) {
-            viewMode = "SIDE PROFILE (LOOKING RIGHT)";
-            hideBackPoints = true;
-        } else if (rotationBias > 0.04) {
-            viewMode = "SIDE PROFILE (LOOKING LEFT)";
-            hideBackPoints = true;
+        let trackingDirection = "CENTER VIEW";
+        if (ratio < 0.45) {
+            trackingDirection = "PROFILE VIEW (RIGHT SIDE)";
+        } else if (ratio > 2.2) {
+            trackingDirection = "PROFILE VIEW (LEFT SIDE)";
         }
-        orientationDisplay.textContent = `VIEW: ${viewMode}`;
+        trackDirDisplay.textContent = `FACING: ${trackingDirection}`;
 
-        // --- RENDERING METHOD (NO SOLID COLOR FILLING) ---
-        // Explicitly using individual line paths ensures it won't fill with green solid blocks
-        ctx.strokeStyle = "rgba(0, 255, 255, 0.2)";
+        // Update target feature tracking locks in telemetry
+        featuresDisplay.innerHTML = `
+            CHIN: <span style="color:#00ffff">LOCKED (NODE 152)</span><br>
+            EYEBROWS: <span style="color:#00ffff">LOCKED (MULTI-SEGMENT)</span><br>
+            EYES: <span style="color:#00ffff">LOCKED (IRIS REFINE)</span><br>
+            LIPS: <span style="color:#00ffff">LOCKED (STRETCH RIG)</span>
+        `;
+
+        // --- FULL 3D CONNECTIVITY LINES (NO HARD PASS CUTOFFS) ---
+        ctx.strokeStyle = "rgba(0, 255, 255, 0.18)";
         ctx.lineWidth = 0.8;
-        
+        ctx.beginPath();
         for (const connection of FACEMESH_TESSELATION) {
             const fromPt = landmarks[connection[0]];
             const toPt = landmarks[connection[1]];
-
             if (fromPt && toPt) {
-                // Eliminate lines that turn behind the side profile view space
-                if (hideBackPoints) {
-                    if (rotationBias < -0.04 && (fromPt.z > 0.01 || toPt.z > 0.01)) continue;
-                    if (rotationBias > 0.04 && (fromPt.z > 0.01 || toPt.z > 0.01)) continue;
-                }
-
-                ctx.beginPath();
                 ctx.moveTo(fromPt.x * w, fromPt.y * h);
                 ctx.lineTo(toPt.x * w, toPt.y * h);
-                ctx.stroke();
             }
         }
+        ctx.stroke();
 
-        // --- FIXED HIGH-CONTRAST FEATURE LINES ---
-        const features = [
+        // --- ACCENT FEATURE RINGS ---
+        const structuralFeatures = [
             { path: FACEMESH_RIGHT_EYE, color: "#00ffff", width: 1.8 },
             { path: FACEMESH_LEFT_EYE, color: "#00ffff", width: 1.8 },
             { path: FACEMESH_LIPS, color: "#00ffff", width: 1.8 },
@@ -146,7 +149,7 @@ function renderVectorMatrix(results) {
             { path: FACEMESH_LEFT_EYEBROW, color: "#00ffff", width: 1.5 }
         ];
 
-        features.forEach(feature => {
+        structuralFeatures.forEach(feature => {
             ctx.strokeStyle = feature.color;
             ctx.lineWidth = feature.width;
             ctx.beginPath();
@@ -161,25 +164,29 @@ function renderVectorMatrix(results) {
             ctx.stroke();
         });
 
-        // --- RAW NODE OVERLAY (STRETCH SENSITIVE) ---
-        // Dots map directly to your face coordinates with zero delay filters
+        // --- INSTANT SENSITIVE JUNCTION NODES ---
+        // Keeps all dots rendering relative to real coordinates so stretching works flawlessly
         ctx.fillStyle = "#33ffff";
         for (let i = 0; i < landmarks.length; i++) {
             const pt = landmarks[i];
-            
-            if (hideBackPoints) {
-                if (rotationBias < -0.04 && pt.z > 0.015) continue;
-                if (rotationBias > 0.04 && pt.z > 0.015) continue;
-            }
-
             ctx.beginPath();
-            ctx.arc(pt.x * w, pt.y * h, 1.5, 0, 2 * Math.PI);
+            ctx.arc(pt.x * w, pt.y * h, 1.4, 0, 2 * Math.PI);
             ctx.fill();
         }
+    } else {
+        // Reset telemetry layout if tracking object breaks perspective entirely
+        trackDirDisplay.textContent = "FACING: LOST TARGET";
+        featuresDisplay.innerHTML = `
+            CHIN: <span class="lock-tag">LOST</span><br>
+            EYEBROWS: <span class="lock-tag">LOST</span><br>
+            EYES: <span class="lock-tag">LOST</span><br>
+            LIPS: <span class="lock-tag">LOST</span>
+        `;
     }
 
     ctx.restore();
 
+    // Standard Render Update
     frameCount++;
     const now = performance.now();
     if (now >= lastFpsUpdate + 1000) {
