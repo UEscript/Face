@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>All-Angle Responsive Matrix</title>
+    <title>All-Angle Dual Matrix Rig</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -21,22 +22,21 @@
             font-size: 11px; color: #00ffff; font-family: monospace;
             line-height: 1.5; letter-spacing: 0.5px; backdrop-filter: blur(10px);
         }
-        .lock-tag { color: #ff0055; font-weight: bold; }
     </style>
 </head>
 <body>
 
 <div id="app">
     <div id="telemetry">
-        <div>SYSTEM: ALL-ANGLE GEOMETRY ENGINE</div>
+        <div>SYSTEM: UNIFIED ALL-ANGLE MATRIX</div>
         <div id="fps">FPS: --</div>
         <hr style="border: 0; border-top: 1px solid rgba(0,255,255,0.2); margin: 8px 0;">
-        <div id="track-dir">FACING: DETECTING...</div>
         <div id="features-list">
-            CHIN: <span class="lock-tag">WAITING</span><br>
-            EYEBROWS: <span class="lock-tag">WAITING</span><br>
-            EYES: <span class="lock-tag">WAITING</span><br>
-            LIPS: <span class="lock-tag">WAITING</span>
+            CHIN: <span style="color:#00ffff">TRACKING</span><br>
+            EYEBROWS: <span style="color:#00ffff">TRACKING</span><br>
+            EYES: <span style="color:#00ffff">TRACKING</span><br>
+            LIPS: <span style="color:#00ffff">TRACKING</span><br>
+            HANDS: <span style="color:#00ffff">TRACKING</span>
         </div>
     </div>
     <video id="video" autoplay playsinline muted></video>
@@ -48,21 +48,22 @@ const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const fpsDisplay = document.getElementById("fps");
-const trackDirDisplay = document.getElementById("track-dir");
-const featuresDisplay = document.getElementById("features-list");
 
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
+window.latestHandResults = null;
+
+const HAND_LINKS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[9,10],[10,11],[11,12],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
 
 navigator.mediaDevices.getUserMedia({
     video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }
 }).then(stream => {
     video.srcObject = stream;
     video.play();
-    initializeAllAngleEngine();
+    initializeUnifiedRig();
 });
 
-function initializeAllAngleEngine() {
+function initializeUnifiedRig() {
     const faceMesh = new FaceMesh({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
@@ -74,8 +75,23 @@ function initializeAllAngleEngine() {
         minTrackingConfidence: 0.4
     });
 
+    const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.4,
+        minTrackingConfidence: 0.4
+    });
+
     faceMesh.onResults((results) => {
-        renderAllAngleMatrix(results);
+        renderUnifiedMatrix(results);
+    });
+
+    hands.onResults((results) => {
+        window.latestHandResults = results;
     });
 
     const camera = new Camera(video, {
@@ -83,12 +99,13 @@ function initializeAllAngleEngine() {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             await faceMesh.send({ image: video });
+            await hands.send({ image: video });
         }
     });
     camera.start();
 }
 
-function renderAllAngleMatrix(results) {
+function renderUnifiedMatrix(faceResults) {
     const w = canvas.width;
     const h = canvas.height;
     
@@ -97,36 +114,11 @@ function renderAllAngleMatrix(results) {
     ctx.translate(w, 0);
     ctx.scale(-1, 1);
 
-    if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-        const landmarks = results.multiFaceLandmarks[0];
+    // --- 3D FACE RENDER LOOP ---
+    if (faceResults.multiFaceLandmarks && faceResults.multiFaceLandmarks.length > 0) {
+        const landmarks = faceResults.multiFaceLandmarks[0];
 
-        // --- ASPECT RATIO POSITION DETECTION ---
-        // Dynamically tracks orientation based on horizontal surface span ratios
-        const leftEdge = landmarks[234].x;
-        const rightEdge = landmarks[454].x;
-        const noseCenter = landmarks[1].x;
-
-        const leftDist = Math.abs(noseCenter - leftEdge);
-        const rightDist = Math.abs(rightEdge - noseCenter);
-        const ratio = leftDist / rightDist;
-
-        let trackingDirection = "CENTER VIEW";
-        if (ratio < 0.45) {
-            trackingDirection = "PROFILE VIEW (RIGHT SIDE)";
-        } else if (ratio > 2.2) {
-            trackingDirection = "PROFILE VIEW (LEFT SIDE)";
-        }
-        trackDirDisplay.textContent = `FACING: ${trackingDirection}`;
-
-        // Update target feature tracking locks in telemetry
-        featuresDisplay.innerHTML = `
-            CHIN: <span style="color:#00ffff">LOCKED (NODE 152)</span><br>
-            EYEBROWS: <span style="color:#00ffff">LOCKED (MULTI-SEGMENT)</span><br>
-            EYES: <span style="color:#00ffff">LOCKED (IRIS REFINE)</span><br>
-            LIPS: <span style="color:#00ffff">LOCKED (STRETCH RIG)</span>
-        `;
-
-        // --- FULL 3D CONNECTIVITY LINES (NO HARD PASS CUTOFFS) ---
+        // Background Mesh Lines (Thin, clean cyan glow)
         ctx.strokeStyle = "rgba(0, 255, 255, 0.18)";
         ctx.lineWidth = 0.8;
         ctx.beginPath();
@@ -135,12 +127,13 @@ function renderAllAngleMatrix(results) {
             const toPt = landmarks[connection[1]];
             if (fromPt && toPt) {
                 ctx.moveTo(fromPt.x * w, fromPt.y * h);
+                ctx.lineTo(fromPt.x * w, fromPt.y * h); // Clean trace line step
                 ctx.lineTo(toPt.x * w, toPt.y * h);
             }
         }
         ctx.stroke();
 
-        // --- ACCENT FEATURE RINGS ---
+        // Main Feature Highlights (Eyes, Brows, Lips)
         const structuralFeatures = [
             { path: FACEMESH_RIGHT_EYE, color: "#00ffff", width: 1.8 },
             { path: FACEMESH_LEFT_EYE, color: "#00ffff", width: 1.8 },
@@ -164,8 +157,7 @@ function renderAllAngleMatrix(results) {
             ctx.stroke();
         });
 
-        // --- INSTANT SENSITIVE JUNCTION NODES ---
-        // Keeps all dots rendering relative to real coordinates so stretching works flawlessly
+        // Instant Skin-Stretch Nodes
         ctx.fillStyle = "#33ffff";
         for (let i = 0; i < landmarks.length; i++) {
             const pt = landmarks[i];
@@ -173,20 +165,40 @@ function renderAllAngleMatrix(results) {
             ctx.arc(pt.x * w, pt.y * h, 1.4, 0, 2 * Math.PI);
             ctx.fill();
         }
-    } else {
-        // Reset telemetry layout if tracking object breaks perspective entirely
-        trackDirDisplay.textContent = "FACING: LOST TARGET";
-        featuresDisplay.innerHTML = `
-            CHIN: <span class="lock-tag">LOST</span><br>
-            EYEBROWS: <span class="lock-tag">LOST</span><br>
-            EYES: <span class="lock-tag">LOST</span><br>
-            LIPS: <span class="lock-tag">LOST</span>
-        `;
+    }
+
+    // --- MATCHING CYAN HAND RIGS ---
+    const activeHands = window.latestHandResults;
+    if (activeHands && activeHands.multiHandLandmarks) {
+        activeHands.multiHandLandmarks.forEach(handLandmarks => {
+            
+            // Structural bone links matching the thin background mesh lines
+            ctx.strokeStyle = "rgba(0, 255, 255, 0.25)";
+            ctx.lineWidth = 1.0;
+            ctx.beginPath();
+            for (const connection of HAND_LINKS) {
+                const from = handLandmarks[connection[0]];
+                const to = handLandmarks[connection[1]];
+                if (from && to) {
+                    ctx.moveTo(from.x * w, from.y * h);
+                    ctx.lineTo(to.x * w, to.y * h);
+                }
+            }
+            ctx.stroke();
+
+            // Sharp cyan joint dots matching the face nodes
+            ctx.fillStyle = "#33ffff";
+            for (const pt of handLandmarks) {
+                ctx.beginPath();
+                ctx.arc(pt.x * w, pt.y * h, 1.6, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+        });
     }
 
     ctx.restore();
 
-    // Standard Render Update
+    // Telemetry FPS Refresh
     frameCount++;
     const now = performance.now();
     if (now >= lastFpsUpdate + 1000) {
