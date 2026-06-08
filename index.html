@@ -42,15 +42,15 @@
             left: 20px; 
             z-index: 10; 
             padding: 12px 16px; 
-            background: rgba(4, 4, 6, 0.9); 
-            border: 1px solid rgba(0, 255, 150, 0.3); 
+            background: rgba(14, 24, 20, 0.85); 
+            border: 1px solid rgba(0, 255, 102, 0.2); 
             border-radius: 8px; 
             font-size: 12px; 
-            color: #00ff96;
-            backdrop-filter: blur(10px); 
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            color: #00ff66;
+            backdrop-filter: blur(8px); 
             font-family: monospace;
-            line-height: 1.5;
+            font-weight: bold;
+            line-height: 1.6;
         }
     </style>
 </head>
@@ -58,9 +58,8 @@
 
 <div id="app">
     <div id="telemetry">
-        <div>SYSTEM: FACIAL IQ GEOMETRY ENGINE</div>
-        <div id="fps">FPS: --</div>
-        <div id="status">STATUS: INITIALIZING CAM FEED...</div>
+        <div id="status">ENGINE: REAL-TIME GEOMETRIC WIREFRAME</div>
+        <div id="fps">FPS: -- [GPU ACCELERATED]</div>
     </div>
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
@@ -81,7 +80,7 @@ let lastVideoTime = -1;
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
 
-// Original working hand tracking coordinates
+// Smooth wireframe array maps for hand nodes
 const HAND_CONNECTIONS = [
     [0,1], [1,2], [2,3], [3,4],           
     [0,5], [5,6], [6,7], [7,8],           
@@ -92,13 +91,9 @@ const HAND_CONNECTIONS = [
     [0,5], [0,17]                         
 ];
 
-const HAND_EDGES = [0, 1, 2, 3, 4, 3, 2, 1, 5, 6, 7, 8, 7, 6, 9, 10, 11, 12, 11, 10, 13, 14, 15, 16, 15, 14, 17, 18, 19, 20, 19, 18, 17, 0];
-
 async function initializeSystem() {
     try {
-        statusDisplay.textContent = "STATUS: REQUESTING HARDWARE FEED...";
-        
-        // Asks for camera first thing to guarantee browser hardware capture
+        // STEP 1: Fire camera instantly to avoid iOS/Safari permission time-out locks
         const stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } }
         });
@@ -111,7 +106,7 @@ async function initializeSystem() {
             };
         });
 
-        statusDisplay.textContent = "STATUS: DOWNLOADING TARGET MODELS...";
+        // STEP 2: Load processing pipelines while video streams cleanly
         const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
         
         faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
@@ -132,11 +127,10 @@ async function initializeSystem() {
             numHands: 2
         });
 
-        statusDisplay.textContent = "STATUS: LOCK ACQUIRED";
         requestAnimationFrame(processingRenderLoop);
 
     } catch (err) {
-        statusDisplay.textContent = "STATUS: INITIALIZATION ERROR";
+        statusDisplay.textContent = "ENGINE CRITICAL: HARDWARE FAULT";
         console.error(err);
     }
 }
@@ -157,70 +151,58 @@ function processingRenderLoop() {
         ctx.translate(canvas.width, 0);
         ctx.scale(-1, 1);
 
-        const faceResult = faceLandmarker.detectForVideo(video, timestamp);
-        const handResult = handLandmarker.detectForVideo(video, timestamp);
+        const faceResult = faceLandmarker ? faceLandmarker.detectForVideo(video, timestamp) : null;
+        const handResult = handLandmarker ? handLandmarker.detectForVideo(video, timestamp) : null;
 
         const w = canvas.width;
         const h = canvas.height;
 
-        // --- SOLID 3D MASK SHADER ---
-        if (faceResult.faceLandmarks && faceResult.faceLandmarks.length > 0) {
+        // --- GLOWING NEON FACE WIREFRAME ---
+        if (faceResult && faceResult.faceLandmarks && faceResult.faceLandmarks.length > 0) {
             const face = faceResult.faceLandmarks[0];
 
-            // Procedural lattice builder: constructs clean, solid facets across the 3D grid safely
-            for (let i = 0; i < face.length; i++) {
-                const p1 = face[i];
-                const p2 = face[(i + 1) % face.length];
-                const p3 = face[(i + 17) % face.length]; // Generates highly detailed interlaced panel strips
-
-                if (p1 && p2 && p3) {
-                    const x1 = p1.x * w, y1 = p1.y * h, z1 = p1.z * w;
-                    const x2 = p2.x * w, y2 = p2.y * h, z2 = p2.z * w;
-                    const x3 = p3.x * w, y3 = p3.y * h, z3 = p3.z * w;
-
-                    // Light estimation vector calculation
-                    const v1x = x2 - x1, v1y = y2 - y1, v1z = z2 - z1;
-                    const v2x = x3 - x1, v2y = y3 - y1, v2z = z3 - z1;
-
-                    const nx = v1y * v2z - v1z * v2y;
-                    const ny = v1z * v2x - v1x * v2z;
-                    const nz = v1x * v2y - v1y * v2x;
-                    
-                    const length = Math.sqrt(nx*nx + ny*ny + nz*nz);
-                    let lighting = 0.5; 
-                    if (length > 0) {
-                        lighting = Math.max(0.1, Math.min(1.0, (nx * 0.3 + ny * -0.4 + nz * 0.9) / length));
-                    }
-
-                    // Shaded green panel rendering loop
-                    const r = Math.floor(15 + lighting * 35);
-                    const g = Math.floor(80 + lighting * 120);
-                    const b = Math.floor(40 + lighting * 60);
-                    
-                    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.65)`;
-                    ctx.beginPath();
-                    ctx.moveTo(x1, y1);
-                    ctx.lineTo(x2, y2);
-                    ctx.lineTo(x3, y3);
-                    ctx.closePath();
-                    ctx.fill();
-
-                    // Geometric grid lines overlaid perfectly on top
-                    ctx.strokeStyle = "rgba(0, 255, 140, 0.25)";
-                    ctx.lineWidth = 0.5;
-                    ctx.stroke();
+            // 1. NEON CYAN: Face outer contour boundaries
+            ctx.strokeStyle = "#00f5d4";
+            ctx.lineWidth = 2.2;
+            const contourIndices = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10];
+            ctx.beginPath();
+            contourIndices.forEach((idx, step) => {
+                const pt = face[idx];
+                if (pt) {
+                    if (step === 0) ctx.moveTo(pt.x * w, pt.y * h);
+                    else ctx.lineTo(pt.x * w, pt.y * h);
                 }
-            }
+            });
+            ctx.stroke();
 
-            // High-contrast neon pink tracks for key features
-            ctx.strokeStyle = "rgba(255, 51, 102, 0.8)";
-            ctx.lineWidth = 2;
-            const features = [
-                [33, 160, 158, 133, 153, 144, 33], 
-                [362, 385, 387, 263, 373, 380, 362], 
-                [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84, 181, 91, 146, 61] 
+            // 2. NEON CYAN: Eyebrows and Nose architecture lines
+            const cyanStructures = [
+                [70, 63, 105, 66, 107, 55, 65, 52, 53, 46], // Left eyebrow sequence
+                [336, 296, 334, 293, 300, 276, 283, 282, 295, 285], // Right eyebrow sequence
+                [168, 6, 197, 195, 5] // Central nose ridge
             ];
-            features.forEach(path => {
+            cyanStructures.forEach(path => {
+                ctx.beginPath();
+                path.forEach((idx, step) => {
+                    const pt = face[idx];
+                    if (pt) {
+                        if (step === 0) ctx.moveTo(pt.x * w, pt.y * h);
+                        else ctx.lineTo(pt.x * w, pt.y * h);
+                    }
+                });
+                ctx.stroke();
+            });
+
+            // 3. HOT PINK: Eyes and Mouth scanner target rings
+            ctx.strokeStyle = "#ff007f";
+            ctx.lineWidth = 2.2;
+            const pinkStructures = [
+                [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246, 33], // Left Eye ring
+                [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398, 362], // Right Eye ring
+                [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185, 61], // Outer Lips
+                [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 418, 312, 311, 310, 13, 80, 81, 82, 96, 78]   // Inner Lips
+            ];
+            pinkStructures.forEach(path => {
                 ctx.beginPath();
                 path.forEach((idx, step) => {
                     const pt = face[idx];
@@ -233,11 +215,11 @@ function processingRenderLoop() {
             });
         }
 
-        // --- ORIGINAL UNTOUCHED HAND MAPPER ---
-        if (handResult.landmarks && handResult.landmarks.length > 0) {
+        // --- ORIGINAL HOVERING GOLD HAND RIGS ---
+        if (handResult && handResult.landmarks && handResult.landmarks.length > 0) {
             handResult.landmarks.forEach(hand => {
                 ctx.strokeStyle = "#ffcc00"; 
-                ctx.lineWidth = 2.2;
+                ctx.lineWidth = 2.5;
                 ctx.beginPath();
                 HAND_CONNECTIONS.forEach(([start, end]) => {
                     const p1 = hand[start];
@@ -245,18 +227,6 @@ function processingRenderLoop() {
                     if (p1 && p2) {
                         ctx.moveTo(p1.x * w, p1.y * h);
                         ctx.lineTo(p2.x * w, p2.y * h);
-                    }
-                });
-                ctx.stroke();
-
-                ctx.strokeStyle = "rgba(255, 204, 0, 0.5)";
-                ctx.lineWidth = 1.5;
-                ctx.beginPath();
-                HAND_EDGES.forEach((idx, step) => {
-                    const pt = hand[idx];
-                    if (pt) {
-                        if (step === 0) ctx.moveTo(pt.x * w, pt.y * h);
-                        else ctx.lineTo(pt.x * w, pt.y * h);
                     }
                 });
                 ctx.stroke();
@@ -270,7 +240,7 @@ function processingRenderLoop() {
     const now = performance.now();
     if (now >= lastFpsUpdate + 1000) {
         const currentFps = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
-        fpsDisplay.textContent = `FPS: ${currentFps} [GPU NATIVE]`;
+        fpsDisplay.textContent = `FPS: ${currentFps} [GPU ACCELERATED]`;
         frameCount = 0;
         lastFpsUpdate = now;
     }
