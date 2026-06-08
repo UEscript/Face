@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>All-Angle Dual Matrix Rig</title>
+    <title>Front-Facing Unified Matrix Rig</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
@@ -28,14 +28,11 @@
 
 <div id="app">
     <div id="telemetry">
-        <div>SYSTEM: UNIFIED ALL-ANGLE MATRIX</div>
+        <div>SYSTEM: FRONT MASK GEOMETRY Engine</div>
         <div id="fps">FPS: --</div>
         <hr style="border: 0; border-top: 1px solid rgba(0,255,255,0.2); margin: 8px 0;">
         <div id="features-list">
-            CHIN: <span style="color:#00ffff">TRACKING</span><br>
-            EYEBROWS: <span style="color:#00ffff">TRACKING</span><br>
-            EYES: <span style="color:#00ffff">TRACKING</span><br>
-            LIPS: <span style="color:#00ffff">TRACKING</span><br>
+            FACE MASK: <span style="color:#00ffff">LOCKED</span><br>
             HANDS: <span style="color:#00ffff">TRACKING</span>
         </div>
     </div>
@@ -60,10 +57,10 @@ navigator.mediaDevices.getUserMedia({
 }).then(stream => {
     video.srcObject = stream;
     video.play();
-    initializeUnifiedRig();
+    initializeFrontRig();
 });
 
-function initializeUnifiedRig() {
+function initializeFrontRig() {
     const faceMesh = new FaceMesh({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
@@ -71,8 +68,8 @@ function initializeUnifiedRig() {
     faceMesh.setOptions({
         maxNumFaces: 1,
         refineLandmarks: true, 
-        minDetectionConfidence: 0.4,
-        minTrackingConfidence: 0.4
+        minDetectionConfidence: 0.45,
+        minTrackingConfidence: 0.45
     });
 
     const hands = new Hands({
@@ -82,12 +79,12 @@ function initializeUnifiedRig() {
     hands.setOptions({
         maxNumHands: 2,
         modelComplexity: 1,
-        minDetectionConfidence: 0.4,
-        minTrackingConfidence: 0.4
+        minDetectionConfidence: 0.45,
+        minTrackingConfidence: 0.45
     });
 
     faceMesh.onResults((results) => {
-        renderUnifiedMatrix(results);
+        renderFrontMatrix(results);
     });
 
     hands.onResults((results) => {
@@ -105,7 +102,7 @@ function initializeUnifiedRig() {
     camera.start();
 }
 
-function renderUnifiedMatrix(faceResults) {
+function renderFrontMatrix(faceResults) {
     const w = canvas.width;
     const h = canvas.height;
     
@@ -114,11 +111,11 @@ function renderUnifiedMatrix(faceResults) {
     ctx.translate(w, 0);
     ctx.scale(-1, 1);
 
-    // --- 3D FACE RENDER LOOP ---
+    // --- FRONT FACE MASK RENDER ---
     if (faceResults.multiFaceLandmarks && faceResults.multiFaceLandmarks.length > 0) {
         const landmarks = faceResults.multiFaceLandmarks[0];
 
-        // Background Mesh Lines (Thin, clean cyan glow)
+        // Background Mesh Lines (Subtle cyan overlay glow)
         ctx.strokeStyle = "rgba(0, 255, 255, 0.18)";
         ctx.lineWidth = 0.8;
         ctx.beginPath();
@@ -127,13 +124,12 @@ function renderUnifiedMatrix(faceResults) {
             const toPt = landmarks[connection[1]];
             if (fromPt && toPt) {
                 ctx.moveTo(fromPt.x * w, fromPt.y * h);
-                ctx.lineTo(fromPt.x * w, fromPt.y * h); // Clean trace line step
                 ctx.lineTo(toPt.x * w, toPt.y * h);
             }
         }
         ctx.stroke();
 
-        // Main Feature Highlights (Eyes, Brows, Lips)
+        // Main Accent Feature Rings
         const structuralFeatures = [
             { path: FACEMESH_RIGHT_EYE, color: "#00ffff", width: 1.8 },
             { path: FACEMESH_LEFT_EYE, color: "#00ffff", width: 1.8 },
@@ -157,7 +153,7 @@ function renderUnifiedMatrix(faceResults) {
             ctx.stroke();
         });
 
-        // Instant Skin-Stretch Nodes
+        // Stretch-Responsive Junction Nodes
         ctx.fillStyle = "#33ffff";
         for (let i = 0; i < landmarks.length; i++) {
             const pt = landmarks[i];
@@ -167,12 +163,12 @@ function renderUnifiedMatrix(faceResults) {
         }
     }
 
-    // --- MATCHING CYAN HAND RIGS ---
+    // --- CYAN MATCHING HAND TRACKING ---
     const activeHands = window.latestHandResults;
     if (activeHands && activeHands.multiHandLandmarks) {
         activeHands.multiHandLandmarks.forEach(handLandmarks => {
             
-            // Structural bone links matching the thin background mesh lines
+            // Hand structural bone connections
             ctx.strokeStyle = "rgba(0, 255, 255, 0.25)";
             ctx.lineWidth = 1.0;
             ctx.beginPath();
@@ -186,7 +182,7 @@ function renderUnifiedMatrix(faceResults) {
             }
             ctx.stroke();
 
-            // Sharp cyan joint dots matching the face nodes
+            // Hand joint dots
             ctx.fillStyle = "#33ffff";
             for (const pt of handLandmarks) {
                 ctx.beginPath();
@@ -198,7 +194,7 @@ function renderUnifiedMatrix(faceResults) {
 
     ctx.restore();
 
-    // Telemetry FPS Refresh
+    // FPS Loop Update
     frameCount++;
     const now = performance.now();
     if (now >= lastFpsUpdate + 1000) {
