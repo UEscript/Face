@@ -1,285 +1,270 @@
-<script type="module">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>High-Performance Face & Hand Tracker</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { 
+            width: 100%; 
+            height: 100%; 
+            overflow: hidden; 
+            background: #0a0a0c; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        #app { 
+            position: relative; 
+            width: 100vw; 
+            height: 100vh; 
+        }
+        video { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover; 
+            z-index: 1; 
+            transform: scaleX(-1); 
+        }
+        canvas { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover; 
+            z-index: 2; 
+            pointer-events: none;
+        }
+        #status { 
+            position: absolute; 
+            top: 20px; 
+            left: 20px; 
+            z-index: 10; 
+            padding: 12px 16px; 
+            background: rgba(10, 10, 12, 0.85); 
+            border: 1px solid rgba(255, 255, 255, 0.1); 
+            border-radius: 8px; 
+            font-size: 13px; 
+            font-weight: 600; 
+            color: #00ff88;
+            font-family: monospace;
+            backdrop-filter: blur(8px); 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+        }
+    </style>
+</head>
+<body>
 
-import {
-  FaceLandmarker,
-  HandLandmarker,
-  FilesetResolver
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+<div id="app">
+    <div id="status">ENGINE INITIALIZING...</div>
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+</div>
+
+<script type="module">
+import { FilesetResolver, FaceLandmarker, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
-const status = document.getElementById("status");
+const statusMsg = document.getElementById("status");
 
 let faceLandmarker;
 let handLandmarker;
+let lastVideoTime = -1;
+let animationFrameId;
 
-const FACE_LABELS = {
-  "Chin":152,
-  "Nose Tip":1,
-  "Left Eye":33,
-  "Right Eye":263,
-  "Left Brow":70,
-  "Right Brow":300
+// Optimized specific semantic targets to label on the fly
+const TRACKING_LABELS = {
+    10:  "Hairline Center",
+    152: "Chin Base",
+    1 tip: "Nose Tip",
+    33:  "Left Eye Outer",
+    263: "Right Eye Outer",
+    70:  "Left Eyebrow",
+    300: "Right Eyebrow",
+    13:  "Upper Lip",
+    14:  "Lower Lip",
+    234: "Left Cheek",
+    454: "Right Cheek"
 };
 
-async function initModels() {
-
-  const vision = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-  );
-
-  faceLandmarker = await FaceLandmarker.createFromOptions(
-    vision,
-    {
-      baseOptions:{
-        modelAssetPath:
-          "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
-      },
-      runningMode:"VIDEO",
-      numFaces:1
-    }
-  );
-
-  handLandmarker = await HandLandmarker.createFromOptions(
-    vision,
-    {
-      baseOptions:{
-        modelAssetPath:
-          "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task"
-      },
-      runningMode:"VIDEO",
-      numHands:2
-    }
-  );
-}
-
-async function setupCamera() {
-
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video:{
-      facingMode:"user",
-      width:{ideal:1280},
-      height:{ideal:720}
-    }
-  });
-
-  video.srcObject = stream;
-
-  return new Promise(resolve=>{
-    video.onloadedmetadata = resolve;
-  });
-}
-
-function drawPoint(x,y,r=3){
-  ctx.beginPath();
-  ctx.arc(x,y,r,0,Math.PI*2);
-  ctx.fill();
-}
-
-function drawText(text,x,y){
-
-  ctx.font="12px Arial";
-
-  const w=ctx.measureText(text).width;
-
-  ctx.fillStyle="rgba(0,0,0,.7)";
-  ctx.fillRect(x-3,y-14,w+6,18);
-
-  ctx.fillStyle="white";
-  ctx.fillText(text,x,y);
-}
-
-function drawFace(face){
-
-  const w=canvas.width;
-  const h=canvas.height;
-
-  ctx.fillStyle="#00ff88";
-
-  for(const p of face){
-
-    drawPoint(
-      p.x*w,
-      p.y*h,
-      1
-    );
-  }
-
-  ctx.fillStyle="red";
-
-  for(const [name,index] of Object.entries(FACE_LABELS)){
-
-    const p=face[index];
-
-    if(!p) continue;
-
-    const x=p.x*w;
-    const y=p.y*h;
-
-    drawPoint(x,y,4);
-    drawText(name,x+8,y-6);
-  }
-
-  drawFaceOval(face);
-}
-
-function drawFaceOval(face){
-
-  const w=canvas.width;
-  const h=canvas.height;
-
-  const oval = [
-    10,338,297,332,284,251,389,356,454,
-    323,361,288,397,365,379,378,400,
-    377,152,148,176,149,150,136,172,
-    58,132,93,234,127,162,21,54,103,67,109
-  ];
-
-  ctx.strokeStyle="cyan";
-  ctx.lineWidth=2;
-
-  ctx.beginPath();
-
-  oval.forEach((id,i)=>{
-
-    const p=face[id];
-
-    const x=p.x*w;
-    const y=p.y*h;
-
-    if(i===0){
-      ctx.moveTo(x,y);
-    } else {
-      ctx.lineTo(x,y);
-    }
-  });
-
-  ctx.closePath();
-  ctx.stroke();
-}
-
 const HAND_CONNECTIONS = [
-  [0,1],[1,2],[2,3],[3,4],
-  [0,5],[5,6],[6,7],[7,8],
-  [0,9],[9,10],[10,11],[11,12],
-  [0,13],[13,14],[14,15],[15,16],
-  [0,17],[17,18],[18,19],[19,20]
+    [0,1], [1,2], [2,3], [3,4],       // Thumb
+    [0,5], [5,6], [6,7], [7,8],       // Index
+    [9,10], [10,11], [11,12],         // Middle
+    [13,14], [14,15], [15,16],        // Ring
+    [0,17], [17,18], [18,19], [19,20], // Pinky
+    [5,9], [9,13], [13,17]             // Palm base
 ];
 
-function drawHand(hand){
+const HAND_LABELS = { 0: "Wrist", 4: "Thumb", 8: "Index", 12: "Middle", 16: "Ring", 20: "Pinky" };
 
-  const w=canvas.width;
-  const h=canvas.height;
+async function startEngine() {
+    try {
+        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+        
+        // Load ML Tasks with explicit GPU delegation flags handled by MediaPipe internally
+        faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+            baseOptions: { 
+                modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
+                delegate: "GPU"
+            },
+            runningMode: "VIDEO",
+            numFaces: 1
+        });
 
-  ctx.strokeStyle="yellow";
-  ctx.lineWidth=3;
+        handLandmarker = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: { 
+                modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+                delegate: "GPU"
+            },
+            runningMode: "VIDEO",
+            numHands: 2
+        });
 
-  HAND_CONNECTIONS.forEach(([a,b])=>{
-
-    const p1=hand[a];
-    const p2=hand[b];
-
-    ctx.beginPath();
-    ctx.moveTo(p1.x*w,p1.y*h);
-    ctx.lineTo(p2.x*w,p2.y*h);
-    ctx.stroke();
-  });
-
-  ctx.fillStyle="orange";
-
-  hand.forEach(p=>{
-    drawPoint(
-      p.x*w,
-      p.y*h,
-      4
-    );
-  });
-
-  const wrist=hand[0];
-
-  drawText(
-    "Hand",
-    wrist.x*w+10,
-    wrist.y*h
-  );
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { 
+                facingMode: "user", 
+                width: { ideal: 1280 }, 
+                height: { ideal: 720 },
+                frameRate: { ideal: 60 } 
+            }
+        });
+        
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+            video.play();
+            statusMsg.textContent = "TRACKING ACTIVE";
+            matrixLoop();
+        };
+    } catch (err) {
+        statusMsg.textContent = "HARDWARE ERROR: " + err.message;
+        statusMsg.style.color = "#ff3366";
+    }
 }
 
-let lastTime=-1;
+function drawLabel(text, x, y, isHand = false) {
+    ctx.font = "bold 10px monospace";
+    const textWidth = ctx.measureText(text).width;
+    const paddingX = 6;
+    const paddingY = 4;
+    const boxWidth = textWidth + (paddingX * 2);
+    const boxHeight = 14 + paddingY;
 
-function loop(){
+    // Background Container
+    ctx.fillStyle = isHand ? "rgba(255, 204, 0, 0.9)" : "rgba(255, 51, 102, 0.9)";
+    ctx.fillRect(x - paddingX, y - 14, boxWidth, boxHeight);
 
-  canvas.width=video.videoWidth;
-  canvas.height=video.videoHeight;
-
-  ctx.clearRect(
-    0,
-    0,
-    canvas.width,
-    canvas.height
-  );
-
-  if(video.currentTime!==lastTime){
-
-    lastTime=video.currentTime;
-
-    const now=performance.now();
-
-    const faceResults=
-      faceLandmarker.detectForVideo(
-        video,
-        now
-      );
-
-    const handResults=
-      handLandmarker.detectForVideo(
-        video,
-        now
-      );
-
-    if(faceResults.faceLandmarks.length){
-
-      drawFace(
-        faceResults.faceLandmarks[0]
-      );
-    }
-
-    if(handResults.landmarks){
-
-      handResults.landmarks.forEach(
-        hand=>drawHand(hand)
-      );
-    }
-
-    let msg="";
-
-    if(faceResults.faceLandmarks.length){
-      msg+="Face ";
-    }
-
-    if(handResults.landmarks?.length){
-      msg+=`Hands:${handResults.landmarks.length}`;
-    }
-
-    status.textContent=
-      msg || "Searching...";
-  }
-
-  requestAnimationFrame(loop);
+    // Text configuration
+    ctx.fillStyle = isHand ? "#000000" : "#ffffff";
+    ctx.fillText(text, x, y);
 }
 
-async function start(){
+function matrixLoop() {
+    // Lock aspect ratios perfectly to prevent point drifting when resizing or moving close
+    if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+    }
 
-  status.textContent="Loading...";
+    const timestamp = performance.now();
 
-  await initModels();
-  await setupCamera();
+    // Check if a brand new frame has been fetched from the camera hardware
+    if (video.currentTime !== lastVideoTime) {
+        lastVideoTime = video.currentTime;
 
-  status.textContent="Ready";
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        const w = canvas.width;
+        const h = canvas.height;
 
-  loop();
+        // Apply a global mirror transformation onto the canvas engine so 2D rendering locks perfectly with the CSS-mirrored video 
+        ctx.save();
+        ctx.translate(w, 0);
+        ctx.scale(-1, 1);
+
+        // Run inference loops side by side smoothly
+        const faceResult = faceLandmarker.detectForVideo(video, timestamp);
+        const handResult = handLandmarker.detectForVideo(video, timestamp);
+
+        // Render Face Elements
+        if (faceResult.faceLandmarks && faceResult.faceLandmarks.length > 0) {
+            const facePoints = faceResult.faceLandmarks[0];
+
+            // Render background structural mesh dots softly
+            ctx.fillStyle = "rgba(0, 255, 136, 0.35)";
+            for (let i = 0; i < facePoints.length; i++) {
+                const pt = facePoints[i];
+                ctx.beginPath();
+                ctx.arc(pt.x * w, pt.y * h, 1, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Dynamic labeling system
+            for (const [indexStr, labelName] of Object.entries(TRACKING_LABELS)) {
+                const idx = parseInt(indexStr);
+                const pt = facePoints[idx];
+                if (pt) {
+                    const cx = pt.x * w;
+                    const cy = pt.y * h;
+
+                    // Plot key feature points 
+                    ctx.fillStyle = "#ff3366";
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    drawLabel(labelName, cx + 8, cy, false);
+                }
+            }
+        }
+
+        // Render Hand Structural Elements
+        if (handResult.landmarks && handResult.landmarks.length > 0) {
+            handResult.landmarks.forEach((hand) => {
+                // Link bones
+                ctx.strokeStyle = "rgba(255, 204, 0, 0.8)";
+                ctx.lineWidth = 2.5;
+                for (let i = 0; i < HAND_CONNECTIONS.length; i++) {
+                    const p1 = hand[HAND_CONNECTIONS[i][0]];
+                    const p2 = hand[HAND_CONNECTIONS[i][1]];
+                    if (p1 && p2) {
+                        ctx.beginPath();
+                        ctx.moveTo(p1.x * w, p1.y * h);
+                        ctx.lineTo(p2.x * w, p2.y * h);
+                        ctx.stroke();
+                    }
+                }
+
+                // Plot joints and tags
+                for (let j = 0; j < hand.length; j++) {
+                    const joint = hand[j];
+                    const jx = joint.x * w;
+                    const jy = joint.y * h;
+
+                    ctx.fillStyle = "#ffcc00";
+                    ctx.beginPath();
+                    ctx.arc(jx, jy, 4.5, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    if (HAND_LABELS[j] !== undefined) {
+                        drawLabel(HAND_LABELS[j], jx + 8, jy, true);
+                    }
+                }
+            });
+        }
+
+        ctx.restore(); // Reset transformation matrix state safely
+    }
+
+    animationFrameId = requestAnimationFrame(matrixLoop);
 }
 
-start();
-
+startEngine();
 </script>
+</body>
+</html>
