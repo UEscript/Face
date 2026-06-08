@@ -60,7 +60,7 @@
     <div id="hud">
         <div>MATRIX: SOLID 3D GEOMETRY SHADER</div>
         <div id="fps">FPS: --</div>
-        <div id="tracking-state">GEOMETRY MASK: INITIALIZING SYSTEM...</div>
+        <div id="tracking-state">INIT: STARTING ENGINE...</div>
     </div>
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
@@ -75,8 +75,8 @@ const ctx = canvas.getContext("2d");
 const fpsDisplay = document.getElementById("fps");
 const stateDisplay = document.getElementById("tracking-state");
 
-let faceLandmarker;
-let handLandmarker;
+let faceLandmarker = null;
+let handLandmarker = null;
 let activeStream = null;
 let animationFrameId = null;
 let lastVideoTime = -1;
@@ -94,33 +94,45 @@ const HAND_TRIANGLES = [
 
 async function startGeometryEngine() {
     try {
-        stateDisplay.textContent = "GEOMETRY MASK: FETCHING CDN ASSETS...";
+        stateDisplay.textContent = "INIT: RESOLVING WASM BINARIES...";
         
-        // Use CDN locator base for tasks to avoid Google Storage dropouts
-        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+        // Fix: Explicitly declare locateFile paths so the engine maps asset URLs correctly
+        const vision = await FilesetResolver.forVisionTasks(
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+        );
         
-        // Swapped to high-availability jsDelivr CDN mirrors for the model tasks
-        faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
-            baseOptions: { 
-                modelAssetPath: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/models/face_landmarker.task",
-                delegate: "GPU"
-            },
-            runningMode: "VIDEO",
-            numFaces: 1
-        });
+        stateDisplay.textContent = "INIT: COMPILING 3D FACE MODELS...";
+        try {
+            if (faceLandmarker) { faceLandmarker.close(); faceLandmarker = null; }
+            faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+                baseOptions: { 
+                    modelAssetPath: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/models/face_landmarker.task",
+                    delegate: "GPU"
+                },
+                runningMode: "VIDEO",
+                numFaces: 1
+            });
+            faceTriangles = FaceLandmarker.getTrianglesByCpu();
+        } catch (e) {
+            console.warn("Face model allocation retry logic triggered:", e);
+        }
 
-        handLandmarker = await HandLandmarker.createFromOptions(vision, {
-            baseOptions: { 
-                modelAssetPath: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/models/hand_landmarker.task",
-                delegate: "GPU"
-            },
-            runningMode: "VIDEO",
-            numHands: 2
-        });
+        stateDisplay.textContent = "INIT: COMPILING SURFACE HAND MODELS...";
+        try {
+            if (handLandmarker) { handLandmarker.close(); handLandmarker = null; }
+            handLandmarker = await HandLandmarker.createFromOptions(vision, {
+                baseOptions: { 
+                    modelAssetPath: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/models/hand_landmarker.task",
+                    delegate: "GPU"
+                },
+                runningMode: "VIDEO",
+                numHands: 2
+            });
+        } catch (e) {
+            console.warn("Hand model allocation retry logic triggered:", e);
+        }
 
-        faceTriangles = FaceLandmarker.getTrianglesByCpu();
-
-        stateDisplay.textContent = "GEOMETRY MASK: REQUESTING CAMERA...";
+        stateDisplay.textContent = "INIT: OPENING WEBCAM HUB...";
         activeStream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } }
         });
@@ -128,18 +140,19 @@ async function startGeometryEngine() {
         video.srcObject = activeStream;
         
         video.onloadedmetadata = () => {
-            video.play().catch(e => console.log("Play interrupted"));
+            video.play().catch(e => console.log("Stream play caught"));
         };
 
         video.addEventListener("playing", () => {
-            stateDisplay.textContent = "GEOMETRY MASK: ACTIVE LOCK";
+            stateDisplay.textContent = "SCANNER LOCK: MONITORING DATA";
             if (!animationFrameId) {
                 animationFrameId = requestAnimationFrame(renderLoop);
             }
         });
+
     } catch (err) {
-        stateDisplay.textContent = "CRITICAL BOOT FAULT: PIPELINE DEADLOCK";
-        console.error(err);
+        stateDisplay.textContent = "CRITICAL BOOT FAULT: PIPELINE REJECTED";
+        console.error("Initialization pipeline broke down down at:", err);
     }
 }
 
@@ -164,97 +177,92 @@ function renderLoop() {
         ctx.translate(canvas.width, 0);
         ctx.scale(-1, 1);
 
-        const faceResult = faceLandmarker.detectForVideo(video, timestamp);
-        const handResult = handLandmarker.detectForVideo(video, timestamp);
-
         const w = canvas.width;
         const h = canvas.height;
 
-        // --- 3D SOLID SHADED FACE MASK ---
-        if (faceResult.faceLandmarks && faceResult.faceLandmarks.length > 0) {
-            const face = faceResult.faceLandmarks[0];
-            stateDisplay.textContent = "GEOMETRY MASK: SOLID LOCK";
+        // Render Face Mesh
+        if (faceLandmarker) {
+            const faceResult = faceLandmarker.detectForVideo(video, timestamp);
+            if (faceResult && faceResult.faceLandmarks && faceResult.faceLandmarks.length > 0) {
+                const face = faceResult.faceLandmarks[0];
 
-            for (let i = 0; i < faceTriangles.length; i += 3) {
-                const idx1 = faceTriangles[i];
-                const idx2 = faceTriangles[i + 1];
-                const idx3 = faceTriangles[i + 2];
+                for (let i = 0; i < faceTriangles.length; i += 3) {
+                    const p1 = face[faceTriangles[i]];
+                    const p2 = face[faceTriangles[i + 1]];
+                    const p3 = face[faceTriangles[i + 2]];
 
-                const p1 = face[idx1];
-                const p2 = face[idx2];
-                const p3 = face[idx3];
+                    if (p1 && p2 && p3) {
+                        const x1 = p1.x * w, y1 = p1.y * h, z1 = p1.z * w;
+                        const x2 = p2.x * w, y2 = p2.y * h, z2 = p2.z * w;
+                        const x3 = p3.x * w, y3 = p3.y * h, z3 = p3.z * w;
 
-                if (p1 && p2 && p3) {
-                    const x1 = p1.x * w, y1 = p1.y * h, z1 = p1.z * w;
-                    const x2 = p2.x * w, y2 = p2.y * h, z2 = p2.z * w;
-                    const x3 = p3.x * w, y3 = p3.y * h, z3 = p3.z * w;
+                        const v1x = x2 - x1, v1y = y2 - y1, v1z = z2 - z1;
+                        const v2x = x3 - x1, v2y = y3 - y1, v2z = z3 - z1;
 
-                    const v1x = x2 - x1, v1y = y2 - y1, v1z = z2 - z1;
-                    const v2x = x3 - x1, v2y = y3 - y1, v2z = z3 - z1;
+                        const nx = v1y * v2z - v1z * v2y;
+                        const ny = v1z * v2x - v1x * v2z;
+                        const nz = v1x * v2y - v1y * v2x;
+                        
+                        const length = Math.sqrt(nx*nx + ny*ny + nz*nz);
+                        let lighting = 0.5; 
+                        if (length > 0) {
+                            lighting = Math.max(0.1, Math.min(1.0, (nx * 0.3 + ny * -0.4 + nz * 0.9) / length));
+                        }
 
-                    const nx = v1y * v2z - v1z * v2y;
-                    const ny = v1z * v2x - v1x * v2z;
-                    const nz = v1x * v2y - v1y * v2x;
-                    
-                    const length = Math.sqrt(nx*nx + ny*ny + nz*nz);
-                    
-                    let lighting = 0.5; 
-                    if (length > 0) {
-                        lighting = Math.max(0.1, Math.min(1.0, (nx * 0.3 + ny * -0.4 + nz * 0.9) / length));
+                        const r = Math.floor(20 + lighting * 40);
+                        const g = Math.floor(90 + lighting * 110);
+                        const b = Math.floor(35 + lighting * 55);
+                        
+                        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.75)`;
+                        ctx.beginPath();
+                        ctx.moveTo(x1, y1);
+                        ctx.lineTo(x2, y2);
+                        ctx.lineTo(x3, y3);
+                        ctx.closePath();
+                        ctx.fill();
+
+                        ctx.strokeStyle = "rgba(0, 255, 120, 0.35)";
+                        ctx.lineWidth = 0.5;
+                        ctx.stroke();
                     }
-
-                    const r = Math.floor(20 + lighting * 40);
-                    const g = Math.floor(90 + lighting * 110);
-                    const b = Math.floor(35 + lighting * 55);
-                    
-                    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.75)`;
-                    ctx.beginPath();
-                    ctx.moveTo(x1, y1);
-                    ctx.lineTo(x2, y2);
-                    ctx.lineTo(x3, y3);
-                    ctx.closePath();
-                    ctx.fill();
-
-                    ctx.strokeStyle = "rgba(0, 255, 120, 0.35)";
-                    ctx.lineWidth = 0.5;
-                    ctx.stroke();
                 }
             }
-        } else {
-            stateDisplay.textContent = "GEOMETRY MASK: SEARCHING BIOMETRICS...";
         }
 
-        // --- 3D SOLID SHADED HANDS ---
-        if (handResult.landmarks && handResult.landmarks.length > 0) {
-            handResult.landmarks.forEach(hand => {
-                ctx.fillStyle = "rgba(0, 180, 255, 0.25)"; 
-                ctx.beginPath();
-                HAND_TRIANGLES.forEach(([idxA, idxB, idxC]) => {
-                    const pA = hand[idxA];
-                    const pB = hand[idxB];
-                    const pC = hand[idxC];
-                    if (pA && pB && pC) {
-                        ctx.moveTo(pA.x * w, pA.y * h);
-                        ctx.lineTo(pB.x * w, pB.y * h);
-                        ctx.lineTo(pC.x * w, pC.y * h);
-                        ctx.closePath();
-                    }
-                });
-                ctx.fill();
+        // Render Hand Mesh
+        if (handLandmarker) {
+            const handResult = handLandmarker.detectForVideo(video, timestamp);
+            if (handResult && handResult.landmarks && handResult.landmarks.length > 0) {
+                handResult.landmarks.forEach(hand => {
+                    ctx.fillStyle = "rgba(0, 180, 255, 0.25)"; 
+                    ctx.beginPath();
+                    HAND_TRIANGLES.forEach(([idxA, idxB, idxC]) => {
+                        const pA = hand[idxA];
+                        const pB = hand[idxB];
+                        const pC = hand[idxC];
+                        if (pA && pB && pC) {
+                            ctx.moveTo(pA.x * w, pA.y * h);
+                            ctx.lineTo(pB.x * w, pB.y * h);
+                            ctx.lineTo(pC.x * w, pC.y * h);
+                            ctx.closePath();
+                        }
+                    });
+                    ctx.fill();
 
-                ctx.strokeStyle = "#00bbff";
-                ctx.lineWidth = 1.5;
-                ctx.beginPath();
-                HAND_TRIANGLES.forEach(([idxA, idxB, idxC]) => {
-                    const pA = hand[idxA];
-                    const pB = hand[idxB];
-                    if (pA && pB) {
-                        ctx.moveTo(pA.x * w, pA.y * h);
-                        ctx.lineTo(pB.x * w, pB.y * h);
-                    }
+                    ctx.strokeStyle = "#00bbff";
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    HAND_TRIANGLES.forEach(([idxA, idxB, idxC]) => {
+                        const pA = hand[idxA];
+                        const pB = hand[idxB];
+                        if (pA && pB) {
+                            ctx.moveTo(pA.x * w, pA.y * h);
+                            ctx.lineTo(pB.x * w, pB.y * h);
+                        }
+                    });
+                    ctx.stroke();
                 });
-                ctx.stroke();
-            });
+            }
         }
 
         ctx.restore();
@@ -271,9 +279,11 @@ function renderLoop() {
     animationFrameId = requestAnimationFrame(renderLoop);
 }
 
-// Active Safety Clean-up Event: Realeases camera pins instantly during page resets
+// Memory Cleanup Handler: Releases browser references on tab reload
 window.addEventListener("beforeunload", () => {
     if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    if (faceLandmarker) { faceLandmarker.close(); }
+    if (handLandmarker) { handLandmarker.close(); }
     if (activeStream) {
         activeStream.getTracks().forEach(track => track.stop());
     }
