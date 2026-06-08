@@ -30,6 +30,7 @@
     <div id="telemetry">
         <div>SYSTEM: LOCAL GEOMETRIC MATRIX</div>
         <div id="fps">FPS: -- [GPU DIRECT]</div>
+        <div id="status">STATUS: STARTING CAM...</div>
     </div>
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas"></canvas>
@@ -40,11 +41,34 @@ const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const fpsDisplay = document.getElementById("fps");
+const statusDisplay = document.getElementById("status");
 
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
+window.latestHandResults = null;
 
-// Request camera access immediately on page load to prevent mobile Safari device lockouts
+// High-tech skeletal blueprints mapped out directly for mobile compatibility
+const FACE_CONTOURS = [
+    [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10], // Face Outer Edge
+    [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246, 33], // Left Eye Loop
+    [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398, 362], // Right Eye Loop
+    [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185, 61], // Lips Outer Perimeter
+    [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 418, 312, 311, 310, 13, 80, 81, 82, 96, 78],  // Lips Inner Perimeter
+    [70, 63, 105, 66, 107, 55, 65, 52, 53, 46], // Left Eyebrow
+    [336, 296, 334, 293, 300, 276, 283, 282, 295, 285], // Right Eyebrow
+    [168, 6, 197, 195, 5, 4, 1, 19, 94, 2] // Nose Ridge Path
+];
+
+const HAND_CONNECTIONS = [
+    [0,1], [1,2], [2,3], [3,4],           
+    [0,5], [5,6], [6,7], [7,8],           
+    [9,10], [10,11], [11,12],             
+    [13,14], [14,15], [15,16],            
+    [0,17], [17,18], [18,19], [19,20],    
+    [5,9], [9,13], [13,17]
+];
+
+// Instantly request the device camera
 navigator.mediaDevices.getUserMedia({
     video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }
 }).then(stream => {
@@ -52,11 +76,13 @@ navigator.mediaDevices.getUserMedia({
     video.play();
     initializeTracking();
 }).catch(err => {
-    console.error("Camera access denied or unavailable:", err);
+    statusDisplay.textContent = "STATUS: CAMERA DENIED";
+    console.error(err);
 });
 
 function initializeTracking() {
-    // 1. Configure the local face mesh matrix tracker
+    statusDisplay.textContent = "STATUS: INJECTING ENGINE...";
+
     const faceMesh = new FaceMesh({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
@@ -67,7 +93,6 @@ function initializeTracking() {
         minTrackingConfidence: 0.5
     });
 
-    // 2. Configure the local hand skeletal tracker
     const hands = new Hands({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
@@ -78,12 +103,15 @@ function initializeTracking() {
         minTrackingConfidence: 0.5
     });
 
-    // Handle combined tracking output frames
     faceMesh.onResults((results) => {
-        renderMatrixFrame(results, null);
+        statusDisplay.textContent = "STATUS: TRACKING ACTIVE";
+        renderMatrixFrame(results);
     });
     
-    // Direct camera frames straight into the local processing pipelines
+    hands.onResults((results) => {
+        window.latestHandResults = results;
+    });
+
     const camera = new Camera(video, {
         onFrame: async () => {
             canvas.width = video.videoWidth;
@@ -93,15 +121,10 @@ function initializeTracking() {
         }
     });
     
-    // Listen for hand data frames independently to combine with face frames
-    hands.onResults((results) => {
-        window.latestHandResults = results;
-    });
-
     camera.start();
 }
 
-function renderMatrixFrame(faceResults, handResults) {
+function renderMatrixFrame(faceResults) {
     const w = canvas.width;
     const h = canvas.height;
     
@@ -109,65 +132,51 @@ function renderMatrixFrame(faceResults, handResults) {
     
     ctx.save();
     ctx.translate(w, 0);
-    ctx.scale(-1, 1); // Mirror matching the webcam stream flip
+    ctx.scale(-1, 1);
 
-    // --- TRUE GEOMETRIC FACE MESH ---
+    // --- FACE MESH ENGINE ---
     if (faceResults.multiFaceLandmarks && faceResults.multiFaceLandmarks.length > 0) {
         const landmarks = faceResults.multiFaceLandmarks[0];
 
-        // Draw the full interconnected 3D mesh grid (Anatomical Tesselation)
-        ctx.strokeStyle = "rgba(0, 245, 212, 0.25)";
-        ctx.lineWidth = 0.8;
-        ctx.beginPath();
-        for (const connection of FACEMESH_TESSELATION) {
-            const from = landmarks[connection[0]];
-            const to = landmarks[connection[1]];
-            if (from && to) {
-                ctx.moveTo(from.x * w, from.y * h);
-                ctx.lineTo(to.x * w, to.y * h);
-            }
-        }
-        ctx.stroke();
-
-        // Overlay glowing target loops for Eyes, Brows, and Lips
-        const highlightFeatures = [
-            { path: FACEMESH_RIGHT_EYE, color: "#ff007f", width: 2.0 },
-            { path: FACEMESH_LEFT_EYE, color: "#ff007f", width: 2.0 },
-            { path: FACEMESH_LIPS, color: "#ff007f", width: 2.0 },
-            { path: FACEMESH_RIGHT_EYEBROW, color: "#00f5d4", width: 1.5 },
-            { path: FACEMESH_LEFT_EYEBROW, color: "#00f5d4", width: 1.5 }
-        ];
-
-        highlightFeatures.forEach(feature => {
-            ctx.strokeStyle = feature.color;
-            ctx.lineWidth = feature.width;
-            ctx.beginPath();
-            for (const connection of feature.path) {
-                const from = landmarks[connection[0]];
-                const to = landmarks[connection[1]];
-                if (from && to) {
-                    ctx.moveTo(from.x * w, from.y * h);
-                    ctx.lineTo(to.x * w, to.y * h);
-                }
-            }
-            ctx.stroke();
-        });
-
-        // Generate matrix micro-nodes on top of all intersections
-        ctx.fillStyle = "rgba(0, 245, 212, 0.8)";
-        for (const pt of landmarks) {
+        // 1. Plot all face matrix nodes as clean tracking micro-dots
+        ctx.fillStyle = "rgba(0, 245, 212, 0.7)";
+        for (let i = 0; i < landmarks.length; i++) {
+            const pt = landmarks[i];
             ctx.beginPath();
             ctx.arc(pt.x * w, pt.y * h, 1.5, 0, 2 * Math.PI);
             ctx.fill();
         }
+
+        // 2. Connect structural tracking paths smoothly
+        FACE_CONTOURS.forEach((path, pathIdx) => {
+            // Path indices 1, 2, 3, 4 represent eyes and lips -> Style them Hot Pink
+            if (pathIdx >= 1 && pathIdx <= 4) {
+                ctx.strokeStyle = "#ff007f";
+                ctx.lineWidth = 2.0;
+            } else {
+                // Outer bounds, nose, and brows -> Style them Neon Cyan
+                ctx.strokeStyle = "#00f5d4";
+                ctx.lineWidth = 1.5;
+            }
+
+            ctx.beginPath();
+            path.forEach((idx, step) => {
+                const pt = landmarks[idx];
+                if (pt) {
+                    if (step === 0) ctx.moveTo(pt.x * w, pt.y * h);
+                    else ctx.lineTo(pt.x * w, pt.y * h);
+                }
+            });
+            ctx.stroke();
+        });
     }
 
-    // --- STRUCTURAL HAND RIGS ---
+    // --- HAND RIG ENGINE ---
     const activeHands = window.latestHandResults;
     if (activeHands && activeHands.multiHandLandmarks) {
         activeHands.multiHandLandmarks.forEach(handLandmarks => {
             
-            // Connect joints along structural skeletal bone lines
+            // 1. Draw hand skeletal bone lines
             ctx.strokeStyle = "#ffcc00";
             ctx.lineWidth = 2.2;
             ctx.beginPath();
@@ -181,7 +190,7 @@ function renderMatrixFrame(faceResults, handResults) {
             }
             ctx.stroke();
 
-            // Render matching golden matrix tracking nodes
+            // 2. Overlay golden structural node dots
             ctx.fillStyle = "#ffcc00";
             for (const pt of handLandmarks) {
                 ctx.beginPath();
@@ -193,7 +202,7 @@ function renderMatrixFrame(faceResults, handResults) {
 
     ctx.restore();
 
-    // Live FPS Tracking Engine
+    // Hardware Telemetry Engine
     frameCount++;
     const now = performance.now();
     if (now >= lastFpsUpdate + 1000) {
